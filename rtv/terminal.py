@@ -13,17 +13,16 @@ import webbrowser
 import subprocess
 import curses.ascii
 from curses import textpad
+from multiprocessing import Process
 from contextlib import contextmanager
 from tempfile import NamedTemporaryFile
 
 import six
-#pylint: disable=import-error
-from six.moves.urllib.parse import quote
 from kitchen.text.display import textual_width_chop
 
-from . import exceptions
-from . import mime_parsers
-from .objects import LoadScreen, Color
+from . import exceptions, mime_parsers, content
+from .theme import Theme, ThemeList
+from .objects import LoadScreen
 
 try:
     # Fix only needed for versions prior to python 3.6
@@ -47,7 +46,7 @@ class Terminal(object):
     MIN_HEIGHT = 10
     MIN_WIDTH = 20
 
-    # ASCII code
+    # ASCII codes
     ESCAPE = 27
     RETURN = 10
     SPACE = 32
@@ -57,6 +56,9 @@ class Terminal(object):
         self.stdscr = stdscr
         self.config = config
         self.loader = LoadScreen(self)
+        self.theme = None  # Initialized by term.set_theme()
+        self.theme_list = ThemeList()
+
         self._display = None
         self._mailcap_dict = mailcap.getcaps()
         self._term = os.environ.get('TERM')
@@ -67,27 +69,19 @@ class Terminal(object):
 
     @property
     def up_arrow(self):
-        symbol = '^' if self.config['ascii'] else '▲'
-        attr = curses.A_BOLD | Color.GREEN
-        return symbol, attr
+        return '^' if self.config['ascii'] else '▲'
 
     @property
     def down_arrow(self):
-        symbol = 'v' if self.config['ascii'] else '▼'
-        attr = curses.A_BOLD | Color.RED
-        return symbol, attr
+        return 'v' if self.config['ascii'] else '▼'
 
     @property
     def neutral_arrow(self):
-        symbol = 'o' if self.config['ascii'] else '•'
-        attr = curses.A_BOLD
-        return symbol, attr
+        return 'o' if self.config['ascii'] else '•'
 
     @property
     def guilded(self):
-        symbol = '*' if self.config['ascii'] else '✪'
-        attr = curses.A_BOLD | Color.YELLOW
-        return symbol, attr
+        return '*' if self.config['ascii'] else '✪'
 
     @property
     def vline(self):
@@ -198,11 +192,11 @@ class Terminal(object):
         """
 
         if likes is None:
-            return self.neutral_arrow
+            return self.neutral_arrow, self.attr('NeutralVote')
         elif likes:
-            return self.up_arrow
+            return self.up_arrow, self.attr('Upvote')
         else:
-            return self.down_arrow
+            return self.down_arrow, self.attr('Downvote')
 
     def clean(self, string, n_cols=None):
         """
@@ -275,11 +269,30 @@ class Terminal(object):
             # Trying to draw outside of the screen bounds
             return
 
-        text = self.clean(text, n_cols)
-        params = [] if attr is None else [attr]
-        window.addstr(row, col, text, *params)
+        try:
+            text = self.clean(text, n_cols)
+            params = [] if attr is None else [attr]
+            window.addstr(row, col, text, *params)
+        except curses.error as e:
+            _logger.warning('add_line raised an exception')
+            _logger.exception(str(e))
 
-    def show_notification(self, message, timeout=None):
+    @staticmethod
+    def add_space(window):
+        """
+        Shortcut for adding a single space to a window at the current position
+        """
+
+        row, col = window.getyx()
+        _, max_cols = window.getmaxyx()
+        n_cols = max_cols - col - 1
+        if n_cols <= 0:
+            # Trying to draw outside of the screen bounds
+            return
+
+        window.addstr(row, col, ' ')
+
+    def show_notification(self, message, timeout=None, style='Info'):
         """
         Overlay a message box on the center of the screen and wait for input.
 
@@ -287,12 +300,17 @@ class Terminal(object):
             message (list or string): List of strings, one per line.
             timeout (float): Optional, maximum length of time that the message
                 will be shown before disappearing.
+            style (str): The theme element that will be applied to the
+                notification window
         """
+
+        assert style in ('Info', 'Warning', 'Error', 'Success')
 
         if isinstance(message, six.string_types):
             message = message.splitlines()
 
         n_rows, n_cols = self.stdscr.getmaxyx()
+        v_offset, h_offset = self.stdscr.getbegyx()
 
         box_width = max(len(m) for m in message) + 2
         box_height = len(message) + 2
@@ -302,10 +320,11 @@ class Terminal(object):
         box_height = min(box_height, n_rows)
         message = message[:box_height-2]
 
-        s_row = (n_rows - box_height) // 2
-        s_col = (n_cols - box_width) // 2
+        s_row = (n_rows - box_height) // 2 + v_offset
+        s_col = (n_cols - box_width) // 2 + h_offset
 
         window = curses.newwin(box_height, box_width, s_row, s_col)
+        window.bkgd(str(' '), self.attr('Notice{0}'.format(style)))
         window.erase()
         window.border()
 
@@ -383,7 +402,7 @@ class Terminal(object):
                 _logger.warning(stderr)
                 self.show_notification(
                     'Program exited with status={0}\n{1}'.format(
-                        code, stderr.strip()))
+                        code, stderr.strip()), style='Error')
 
         else:
             # Non-blocking, open a background process
@@ -464,11 +483,12 @@ class Terminal(object):
         python webbrowser will try to determine the default to use based on
         your system.
 
-        For browsers requiring an X display, we call
-        webbrowser.open_new_tab(url) and redirect stdout/stderr to devnull.
-        This is a workaround to stop firefox from spewing warning messages to
-        the console. See http://bugs.python.org/issue22277 for a better
-        description of the problem.
+        For browsers requiring an X display, we open a new subprocess and
+        redirect stdout/stderr to devnull. This is a workaround to stop
+        BackgroundBrowsers (e.g. xdg-open, any BROWSER command ending in "&"),
+        from spewing warning messages to the console. See
+        http://bugs.python.org/issue22277 for a better description of the
+        problem.
 
         For console browsers (e.g. w3m), RTV will suspend and display the
         browser window within the same terminal. This mode is triggered either
@@ -479,40 +499,50 @@ class Terminal(object):
            headless
 
         There may be other cases where console browsers are opened (xdg-open?)
-        but are not detected here.
+        but are not detected here. These cases are still unhandled and will
+        probably be broken if we incorrectly assume that self.display=True.
         """
 
         if self.display:
-            # Note that we need to sanitize the url before inserting it into
-            # the python code to prevent injection attacks.
-            command = (
-                "import webbrowser\n"
-                "from six.moves.urllib.parse import unquote\n"
-                "webbrowser.open_new_tab(unquote('%s'))" % quote(url))
-            args = [sys.executable, '-c', command]
-            with self.loader('Opening page in a new window'), \
-                    open(os.devnull, 'ab+', 0) as null:
-                p = subprocess.Popen(args, stdout=null, stderr=null)
-                # Give the browser 5 seconds to open a new tab. Because the
+            with self.loader('Opening page in a new window'):
+
+                def open_url_silent(url):
+                    # This used to be done using subprocess.Popen().
+                    # It was switched to multiprocessing.Process so that we
+                    # can re-use the webbrowser instance that has been patched
+                    # by RTV. It's also safer because it doesn't inject
+                    # python code through the command line.
+
+                    # Surpress stdout/stderr from the browser, see
+                    # https://stackoverflow.com/questions/2323080. We can't
+                    # depend on replacing sys.stdout & sys.stderr because
+                    # webbrowser uses Popen().
+                    stdout, stderr = os.dup(1), os.dup(2)
+                    null = os.open(os.devnull, os.O_RDWR)
+                    try:
+                        os.dup2(null, 1)
+                        os.dup2(null, 2)
+                        webbrowser.open_new_tab(url)
+                    finally:
+                        null.close()
+                        os.dup2(stdout, 1)
+                        os.dup2(stderr, 2)
+
+                p = Process(target=open_url_silent, args=(url,))
+                p.start()
+                # Give the browser 7 seconds to open a new tab. Because the
                 # display is set, calling webbrowser should be non-blocking.
                 # If it blocks or returns an error, something went wrong.
                 try:
-                    start = time.time()
-                    while time.time() - start < 10:
-                        code = p.poll()
-                        if code == 0:
-                            break  # Success
-                        elif code is not None:
-                            raise exceptions.BrowserError(
-                                'Program exited with status=%s' % code)
-                        time.sleep(0.01)
-                    else:
+                    p.join(7)
+                    if p.is_alive():
                         raise exceptions.BrowserError(
-                            'Timeout opening browser')
+                            'Timeout waiting for browser to open')
                 finally:
-                    # Can't check the loader exception because the oauth module
-                    # supersedes this loader and we need to always kill the
-                    # process if escape is pressed
+                    # This will be hit on the browser timeout, but also if the
+                    # user presses the ESC key. We always want to kill the
+                    # webbrowser process if it hasn't opened the tab and
+                    # terminated by now.
                     try:
                         p.terminate()
                     except OSError:
@@ -521,7 +551,7 @@ class Terminal(object):
             with self.suspend():
                 webbrowser.open_new_tab(url)
 
-    def open_pager(self, data):
+    def open_pager(self, data, wrap=None):
         """
         View a long block of text using the system's default pager.
 
@@ -530,6 +560,11 @@ class Terminal(object):
 
         pager = os.getenv('PAGER') or 'less'
         command = shlex.split(pager)
+
+        if wrap:
+            data_lines = content.Content.wrap_text(data, wrap)
+            data = '\n'.join(data_lines)
+
         try:
             with self.suspend():
                 _logger.debug('Running command: %s', command)
@@ -694,18 +729,22 @@ class Terminal(object):
         """
 
         n_rows, n_cols = self.stdscr.getmaxyx()
-        ch, attr = str(' '), curses.A_BOLD | curses.A_REVERSE | Color.CYAN
+        v_offset, h_offset = self.stdscr.getbegyx()
+        ch, attr = str(' '), self.attr('Prompt')
         prompt = self.clean(prompt, n_cols-1)
 
         # Create a new window to draw the text at the bottom of the screen,
         # so we can erase it when we're done.
-        prompt_win = curses.newwin(1, len(prompt)+1, n_rows-1, 0)
+        s_row = v_offset + n_rows - 1
+        s_col = h_offset
+        prompt_win = curses.newwin(1, len(prompt) + 1, s_row, s_col)
         prompt_win.bkgd(ch, attr)
         self.add_line(prompt_win, prompt)
         prompt_win.refresh()
 
         # Create a separate window for text input
-        input_win = curses.newwin(1, n_cols-len(prompt), n_rows-1, len(prompt))
+        s_col = h_offset + len(prompt)
+        input_win = curses.newwin(1, n_cols - len(prompt), s_row, s_col)
         input_win.bkgd(ch, attr)
         input_win.refresh()
 
@@ -777,7 +816,7 @@ class Terminal(object):
 
         out = '\n'.join(stack)
         return out
-    
+
     def clear_screen(self):
         """
         In the beginning this always called touchwin(). However, a bug
@@ -787,14 +826,14 @@ class Terminal(object):
         this in their tmux.conf or .bashrc file which can cause issues.
         Using clearok() instead seems to fix the problem, with the trade off
         of slightly more expensive screen refreshes.
-               
+
         Update: It was discovered that using clearok() introduced a
         separate bug for urxvt users in which their screen flashed when
         scrolling. Heuristics were added to make it work with as many
         configurations as possible. It's still not perfect
         (e.g. urxvt + xterm-256color) will screen flash, but it should
         work in all cases if the user sets their TERM correctly.
-        
+
         Reference:
             https://github.com/michael-lazar/rtv/issues/343
             https://github.com/michael-lazar/rtv/issues/323
@@ -804,3 +843,64 @@ class Terminal(object):
             self.stdscr.touchwin()
         else:
             self.stdscr.clearok(True)
+
+    def attr(self, element):
+        """
+        Shortcut for fetching the color + attribute code for an element.
+        """
+        # The theme must be initialized before calling this
+        assert self.theme is not None
+
+        return self.theme.get(element)
+
+    @staticmethod
+    def check_theme(theme):
+        """
+        Check if the given theme is compatible with the terminal
+        """
+        terminal_colors = curses.COLORS if curses.has_colors() else 0
+
+        if theme.required_colors > terminal_colors:
+            return False
+        elif theme.required_color_pairs > curses.COLOR_PAIRS:
+            return False
+        else:
+            return True
+
+    def set_theme(self, theme=None):
+        """
+        Check that the terminal supports the provided theme, and applies
+        the theme to the terminal if possible.
+
+        If the terminal doesn't support the theme, this falls back to the 
+        default theme. The default theme only requires 8 colors so it
+        should be compatible with any terminal that supports basic colors.
+        """
+
+        terminal_colors = curses.COLORS if curses.has_colors() else 0
+        default_theme = Theme(use_color=bool(terminal_colors))
+
+        if theme is None:
+            theme = default_theme
+
+        elif theme.required_color_pairs > curses.COLOR_PAIRS:
+            _logger.warning(
+                'Theme `%s` requires %s color pairs, but $TERM=%s only '
+                'supports %s color pairs, switching to default theme',
+                theme.name, theme.required_color_pairs, self._term,
+                curses.COLOR_PAIRS)
+            theme = default_theme
+
+        elif theme.required_colors > terminal_colors:
+            _logger.warning(
+                'Theme `%s` requires %s colors, but $TERM=%s only '
+                'supports %s colors, switching to default theme',
+                theme.name, theme.required_colors, self._term,
+                curses.COLORS)
+            theme = default_theme
+
+        theme.bind_curses()
+        self.theme = theme
+
+        # Apply the default color to the whole screen
+        self.stdscr.bkgd(str(' '), self.attr('Normal'))

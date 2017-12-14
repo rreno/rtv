@@ -9,8 +9,9 @@ import codecs
 import six
 import pytest
 
+from rtv.theme import Theme
 from rtv.docs import HELP, COMMENT_EDIT_FILE
-from rtv.exceptions import TemporaryFileError
+from rtv.exceptions import TemporaryFileError, BrowserError
 
 try:
     from unittest import mock
@@ -20,14 +21,10 @@ except ImportError:
 
 def test_terminal_properties(terminal, config):
 
-    assert len(terminal.up_arrow) == 2
-    assert isinstance(terminal.up_arrow[0], six.text_type)
-    assert len(terminal.down_arrow) == 2
-    assert isinstance(terminal.down_arrow[0], six.text_type)
-    assert len(terminal.neutral_arrow) == 2
-    assert isinstance(terminal.neutral_arrow[0], six.text_type)
-    assert len(terminal.guilded) == 2
-    assert isinstance(terminal.guilded[0], six.text_type)
+    assert isinstance(terminal.up_arrow, six.text_type)
+    assert isinstance(terminal.down_arrow, six.text_type)
+    assert isinstance(terminal.neutral_arrow, six.text_type)
+    assert isinstance(terminal.guilded, six.text_type)
 
     terminal._display = None
     with mock.patch('rtv.terminal.sys') as sys, \
@@ -59,6 +56,8 @@ def test_terminal_properties(terminal, config):
 
     assert terminal.MIN_HEIGHT is not None
     assert terminal.MIN_WIDTH is not None
+
+    assert terminal.theme is not None
 
 
 def test_terminal_functions(terminal):
@@ -464,22 +463,38 @@ def test_open_link_subprocess(terminal):
         assert get_error()
 
 
-def test_open_browser(terminal):
-
-    url = 'http://www.test.com'
+def test_open_browser_display(terminal):
 
     terminal._display = True
-    with mock.patch('subprocess.Popen', autospec=True) as Popen:
-        Popen.return_value.poll.return_value = 0
-        terminal.open_browser(url)
-    assert Popen.called
+    with mock.patch('webbrowser.open_new_tab', autospec=True) as open_new_tab:
+        terminal.open_browser('http://www.test.com')
+
+    # open_new_tab() will be executed in the child process so we can't
+    # directly check if the was called from here or not.
+    # open_new_tab.assert_called_with('http://www.test.com')
+
+    # Shouldn't suspend curses
     assert not curses.endwin.called
     assert not curses.doupdate.called
 
+
+def test_open_browser_display_no_response(terminal):
+
+    terminal._display = True
+    with mock.patch('rtv.terminal.Process', autospec=True) as Process:
+        Process.return_value.is_alive.return_value = 1
+        terminal.open_browser('http://www.test.com')
+    assert isinstance(terminal.loader.exception, BrowserError)
+
+
+def test_open_browser_no_display(terminal):
+
     terminal._display = False
     with mock.patch('webbrowser.open_new_tab', autospec=True) as open_new_tab:
-        terminal.open_browser(url)
-    open_new_tab.assert_called_with(url)
+        terminal.open_browser('http://www.test.com')
+    open_new_tab.assert_called_with('http://www.test.com')
+
+    # Should suspend curses to give control of the terminal to the browser
     assert curses.endwin.called
     assert curses.doupdate.called
 
@@ -542,3 +557,109 @@ def test_strip_textpad(terminal):
     text = 'alpha bravo\ncharlie \ndelta  \n  echo   \n\nfoxtrot\n\n\n'
     assert terminal.strip_textpad(text) == (
         'alpha bravocharlie delta\n  echo\n\nfoxtrot')
+
+
+def test_add_space(terminal, stdscr):
+
+    stdscr.x, stdscr.y = 10, 20
+    terminal.add_space(stdscr)
+    stdscr.addstr.assert_called_with(20, 10, ' ')
+
+    # Not enough room to add a space
+    stdscr.reset_mock()
+    stdscr.x = 10
+    stdscr.ncols = 11
+    terminal.add_space(stdscr)
+    assert not stdscr.addstr.called
+
+
+def test_attr(terminal):
+
+    assert terminal.attr('CursorBlock') == 0
+    assert terminal.attr('@CursorBlock') == curses.A_REVERSE
+    assert terminal.attr('NeutralVote') == curses.A_BOLD
+
+    with terminal.theme.turn_on_selected():
+        assert terminal.attr('CursorBlock') == curses.A_REVERSE
+        assert terminal.attr('NeutralVote') == curses.A_BOLD
+
+
+def test_check_theme(terminal):
+
+    monochrome = Theme(use_color=False)
+    default = Theme()
+    color256 = Theme.from_name('molokai')
+
+    curses.has_colors.return_value = False
+    assert terminal.check_theme(monochrome)
+    assert not terminal.check_theme(default)
+    assert not terminal.check_theme(color256)
+
+    curses.has_colors.return_value = True
+    curses.COLORS = 0
+    assert terminal.check_theme(monochrome)
+    assert not terminal.check_theme(default)
+    assert not terminal.check_theme(color256)
+
+    curses.COLORS = 8
+    assert terminal.check_theme(monochrome)
+    assert terminal.check_theme(default)
+    assert not terminal.check_theme(color256)
+
+    curses.COLORS = 256
+    assert terminal.check_theme(monochrome)
+    assert terminal.check_theme(default)
+    assert terminal.check_theme(color256)
+
+    curses.COLOR_PAIRS = 8
+    assert terminal.check_theme(monochrome)
+    assert terminal.check_theme(default)
+    assert not terminal.check_theme(color256)
+
+
+def test_set_theme(terminal, stdscr):
+
+    # Default with color enabled
+    stdscr.reset_mock()
+    terminal.set_theme()
+    assert terminal.theme.use_color
+    assert terminal.theme.display_string == 'default (built-in)'
+    stdscr.bkgd.assert_called_once_with(' ', 0)
+
+    # When the user passes in the --monochrome flag
+    terminal.theme = None
+    terminal.set_theme(Theme(use_color=False))
+    assert not terminal.theme.use_color
+    assert terminal.theme.display_string == 'monochrome (built-in)'
+
+    # When the terminal doesn't support colors
+    curses.COLORS = 0
+    terminal.theme = None
+    terminal.set_theme()
+    assert terminal.theme.display_string == 'monochrome (built-in)'
+
+    # When the terminal doesn't support 256 colors so it falls back to the
+    # built-in default theme
+    curses.COLORS = 8
+    terminal.theme = None
+    terminal.set_theme(Theme.from_name('molokai'))
+    assert terminal.theme.display_string == 'default (built-in)'
+
+    # When the terminal does support the 256 color theme
+    curses.COLORS = 256
+    terminal.theme = None
+    terminal.set_theme(Theme.from_name('molokai'))
+    assert terminal.theme.display_string == 'molokai (preset)'
+
+
+def test_set_theme_no_colors(terminal, stdscr):
+
+    # Monochrome should be forced if the terminal doesn't support color
+    with mock.patch('curses.has_colors') as has_colors:
+        has_colors.return_value = False
+
+        terminal.set_theme()
+        assert not terminal.theme.use_color
+
+        terminal.set_theme(Theme(use_color=True))
+        assert not terminal.theme.use_color

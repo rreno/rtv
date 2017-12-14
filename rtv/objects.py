@@ -3,12 +3,14 @@ from __future__ import unicode_literals
 
 import re
 import os
+import sys
 import time
 import signal
 import inspect
 import weakref
 import logging
 import threading
+import webbrowser
 import curses
 import curses.ascii
 from contextlib import contextmanager
@@ -21,6 +23,40 @@ from .packages import praw
 
 
 _logger = logging.getLogger(__name__)
+
+
+def patch_webbrowser():
+    """
+    Patch webbrowser on macOS to support setting BROWSER=firefox,
+    BROWSER=chrome, etc..
+
+    https://bugs.python.org/issue31348
+    """
+
+    # Add the suckless.org surf browser, which isn't in the python
+    # standard library
+    webbrowser.register('surf', None, webbrowser.BackgroundBrowser('surf'))
+
+    # Fix the opera browser, see https://github.com/michael-lazar/rtv/issues/476.
+    # By default, opera will open a new tab in the current window, which is
+    # what we want to do anyway.
+    webbrowser.register('opera', None, webbrowser.BackgroundBrowser('opera'))
+
+    if sys.platform != 'darwin' or 'BROWSER' not in os.environ:
+        return
+
+    # This is a copy of what's at the end of webbrowser.py, except that
+    # it adds MacOSXOSAScript entries instead of GenericBrowser entries.
+    _userchoices = os.environ["BROWSER"].split(os.pathsep)
+    for cmdline in reversed(_userchoices):
+        if cmdline in ('safari', 'firefox', 'chrome', 'default'):
+            browser = webbrowser.MacOSXOSAScript(cmdline)
+            try:
+                webbrowser.register(cmdline, None, browser, update_tryorder=-1)
+            except TypeError:
+                # 3.7 nightly build changed the method signature
+                # pylint: disable=unexpected-keyword-arg
+                webbrowser.register(cmdline, None, browser, preferred=True)
 
 
 @contextmanager
@@ -56,6 +92,7 @@ def curses_session():
         # return from C start_color() is ignorable.
         try:
             curses.start_color()
+            curses.use_default_colors()
         except:
             _logger.warning('Curses failed to initialize color support')
 
@@ -64,9 +101,6 @@ def curses_session():
             curses.curs_set(0)
         except:
             _logger.warning('Curses failed to initialize the cursor mode')
-
-        # Assign the terminal's default (background) color to code -1
-        curses.use_default_colors()
 
         yield stdscr
 
@@ -203,7 +237,8 @@ class LoadScreen(object):
         for e_type, message in self.EXCEPTION_MESSAGES:
             # Some exceptions we want to swallow and display a notification
             if isinstance(e, e_type):
-                self._terminal.show_notification(message.format(e))
+                msg = message.format(e)
+                self._terminal.show_notification(msg, style='Error')
                 return True
 
     def animate(self, delay, interval, message, trail):
@@ -223,12 +258,16 @@ class LoadScreen(object):
                     return
                 time.sleep(0.01)
 
-        # Build the notification window
+        # Build the notification window. Note that we need to use
+        # curses.newwin() instead of stdscr.derwin() so the text below the
+        # notification window does not got erased when we cover it up.
         message_len = len(message) + len(trail)
         n_rows, n_cols = self._terminal.stdscr.getmaxyx()
-        s_row = (n_rows - 3) // 2
-        s_col = (n_cols - message_len - 1) // 2
+        v_offset, h_offset = self._terminal.stdscr.getbegyx()
+        s_row = (n_rows - 3) // 2 + v_offset
+        s_col = (n_cols - message_len - 1) // 2 + h_offset
         window = curses.newwin(3, message_len + 2, s_row, s_col)
+        window.bkgd(str(' '), self._terminal.attr('NoticeLoading'))
 
         # Animate the loading prompt until the stopping condition is triggered
         # when the context manager exits.
@@ -256,49 +295,6 @@ class LoadScreen(object):
                             self._is_running = False
                             break
                         time.sleep(0.01)
-
-
-class Color(object):
-    """
-    Color attributes for curses.
-    """
-
-    RED = curses.A_NORMAL
-    GREEN = curses.A_NORMAL
-    YELLOW = curses.A_NORMAL
-    BLUE = curses.A_NORMAL
-    MAGENTA = curses.A_NORMAL
-    CYAN = curses.A_NORMAL
-    WHITE = curses.A_NORMAL
-
-    _colors = {
-        'RED': (curses.COLOR_RED, -1),
-        'GREEN': (curses.COLOR_GREEN, -1),
-        'YELLOW': (curses.COLOR_YELLOW, -1),
-        'BLUE': (curses.COLOR_BLUE, -1),
-        'MAGENTA': (curses.COLOR_MAGENTA, -1),
-        'CYAN': (curses.COLOR_CYAN, -1),
-        'WHITE': (curses.COLOR_WHITE, -1),
-    }
-
-    @classmethod
-    def init(cls):
-        """
-        Initialize color pairs inside of curses using the default background.
-
-        This should be called once during the curses initial setup. Afterwards,
-        curses color pairs can be accessed directly through class attributes.
-        """
-
-        for index, (attr, code) in enumerate(cls._colors.items(), start=1):
-            curses.init_pair(index, code[0], code[1])
-            setattr(cls, attr, curses.color_pair(index))
-
-    @classmethod
-    def get_level(cls, level):
-
-        levels = [cls.MAGENTA, cls.CYAN, cls.GREEN, cls.YELLOW]
-        return levels[level % len(levels)]
 
 
 class Navigator(object):

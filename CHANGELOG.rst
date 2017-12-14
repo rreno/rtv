@@ -2,6 +2,9 @@
 RTV Changelog
 =============
 
+.. _1.20.0: http://github.com/michael-lazar/rtv/releases/tag/v1.20.0
+.. _1.19.0: http://github.com/michael-lazar/rtv/releases/tag/v1.19.0
+.. _1.18.0: http://github.com/michael-lazar/rtv/releases/tag/v1.18.0
 .. _1.17.1: http://github.com/michael-lazar/rtv/releases/tag/v1.17.1
 .. _1.17.0: http://github.com/michael-lazar/rtv/releases/tag/v1.17.0
 .. _1.16.0: http://github.com/michael-lazar/rtv/releases/tag/v1.16.0
@@ -28,6 +31,88 @@ RTV Changelog
 .. _1.2.2: http://github.com/michael-lazar/rtv/releases/tag/v1.2.2
 .. _1.2.1: http://github.com/michael-lazar/rtv/releases/tag/v1.2.1
 .. _1.2: http://github.com/michael-lazar/rtv/releases/tag/v1.2
+
+--------------------
+1.20.0_ (2017-12-05)
+--------------------
+
+Features
+
+* Text piped to the ``$PAGER`` will now wrap on word / sentence breaks.
+* New MIME parsers have been added for liveleak.com and worldstarhiphop.com.
+
+Bugfixes
+
+* Fixed a regression where text from the web browser's stdout/stderr was
+  being sent to the terminal window.
+* Fixed crashing on startup when the terminal doesn't support colors.
+* Fixed broken text formatting when running inside of emacs ``term``.
+
+Codebase
+
+* Dropped support for python 3.3 because it's no longer supported upstream
+  by **pytest**. The application will still install through pip but will no
+  longer be tested.
+* Added a text logo to the README.
+
+--------------------
+1.19.0_ (2017-10-24)
+--------------------
+
+Features
+
+* Greatly improved loading times by using smarter rate limiting and page caching.
+* The logout prompt is now visible as a popup notification.
+* New MIME parsers have been added for gifs.com, giphy.com, imgtc.com,
+  imgflip.com, livememe.com, makeameme.org and flickr.com
+* Improved mailcap examples for parsing video links with mpv.
+
+Bugfixes
+
+* Patched a backwards-incompatible Reddit API change with the comment
+  permalink now being returned in the response JSON.
+* Fixed crashing when a comment contained exotic unicode characters like emojis.
+* Removed the option to select custom sorting ranges for controversial and
+  top comments.
+* Fixed MIME parsing for single image Imgur galleries.
+
+Codebase
+
+* Preliminary refactoring for the upcoming theme support.
+* Created some utility scripts for project maintenance.
+* Created a release checklist document.
+* Updated the README gif images and document layout.
+
+--------------------
+1.18.0_ (2017-09-06)
+--------------------
+
+Features
+
+* The ``rtv -l`` flag has been deprecated and replaced with a positional
+  argument, in order to match the syntax of other command line web browsers.
+* NSFW content is now filtered according to the user's reddit profile
+  settings.
+* ``$RTV_BROWSER`` has been added as a way to set the preferred web browser.
+* Sorting options for **relevance** and **comments** are now displayed on
+  the search results page.
+* An **[S]** badge is now displayed next to the submission author.
+* The gfycat MIME parser has been expanded to support more URLs.
+* New MIME parsers have been added for oddshot.tv, clips.twitch.tv,
+  clippituser.tv, and Reddit's beta hosted videos.
+
+Bugfixes
+
+* Users can now use the prompt to navigate to "/comments/..." pages from
+  inside of a submission.
+* Users can now navigate to multireddits using the "/u/me/" prefix.
+* Fixed the ``$BROWSER`` behavior on macOS to support the **chrome**,
+  **firefox**, **safari**, and **default** keywords.
+
+Codebase
+
+* Travis CI tests have been moved to the trusty environment.
+* Added more detailed logging of the environment and settings at startup.
 
 --------------------
 1.17.1_ (2017-08-06)
@@ -408,7 +493,8 @@ Bugfixes
 -----------------
 Features
 
-* Unicode support has been vastly improved and is now turned on by default. Ascii only mode can be toggled with the `--ascii` command line flag.
+* Unicode support has been vastly improved and is now turned on by default.
+  Ascii only mode can be toggled with the `--ascii` command line flag.
 * Added pageup and pagedown with the `m` and `n` keys.
 * Support for terminal based webbrowsers such as links and w3m.
 * Browsing history is now persistent and stored in `$XDG_CACHE_HOME`.

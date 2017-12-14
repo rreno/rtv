@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
+import curses
+
 import six
 
 from rtv import __version__
 from rtv.subreddit_page import SubredditPage
-from rtv.packages.praw.errors import NotFound
+from rtv.packages.praw.errors import NotFound, HTTPException
 
 try:
     from unittest import mock
@@ -38,7 +40,7 @@ def test_subreddit_page_construct(reddit, terminal, config, oauth):
     window.subwin.addstr.assert_any_call(0, 1, text, 2097152)
 
     # Cursor should have been drawn
-    assert window.subwin.chgat.called
+    window.subwin.addch.assert_any_call(0, 0, ' ', curses.A_REVERSE)
 
     # Reload with a smaller terminal window
     terminal.stdscr.ncols = 20
@@ -64,6 +66,27 @@ def test_subreddit_refresh(subreddit_page, terminal):
     assert terminal.loader.exception is None
 
 
+def test_subreddit_reload_page(subreddit_page, terminal, reddit):
+
+    cache = reddit.handler.cache
+    assert len(cache) == 1
+
+    # A plain refresh_content() will use whatever is in the praw cache
+    # instead of making a new request to reddit
+    list(cache.values())[0].status_code = 503
+    subreddit_page.refresh_content()
+    assert isinstance(terminal.loader.exception, HTTPException)
+
+    cache = reddit.handler.cache
+    assert len(cache) == 1
+
+    # But if we manually trigger a page refresh, it should clear the cache
+    # and reload the page instead of returning the cached 503 response
+    list(cache.values())[0].status_code = 503
+    subreddit_page.controller.trigger('r')
+    assert terminal.loader.exception is None
+
+
 def test_subreddit_title(subreddit_page, terminal, capsys):
     subreddit_page.content.name = 'hello ❤'
 
@@ -81,6 +104,11 @@ def test_subreddit_title(subreddit_page, terminal, capsys):
         assert out == '\x1b]2;hello ❤ - rtv {}\x07'.format(__version__)
 
     with mock.patch.dict('os.environ', {'DISPLAY': ''}):
+        subreddit_page.draw()
+        out, _ = capsys.readouterr()
+        assert not out
+
+    with mock.patch.dict('os.environ', {'INSIDE_EMACS': '25.3.1,term:0.96'}):
         subreddit_page.draw()
         out, _ = capsys.readouterr()
         assert not out
@@ -160,6 +188,23 @@ def test_subreddit_prompt_submission_invalid(subreddit_page, terminal):
         terminal.prompt_input.return_value = 'comments/571dw3fakeid'
         subreddit_page.controller.trigger('/')
         assert isinstance(terminal.loader.exception, NotFound)
+
+
+def test_subreddit_order(subreddit_page):
+
+    subreddit_page.content.query = ''
+    subreddit_page.controller.trigger('1')
+    assert subreddit_page.content.order == 'hot'
+    subreddit_page.controller.trigger('3')
+    assert subreddit_page.content.order == 'rising'
+    subreddit_page.controller.trigger('4')
+    assert subreddit_page.content.order == 'new'
+
+    subreddit_page.content.query = 'search text'
+    subreddit_page.controller.trigger('1')
+    assert subreddit_page.content.order == 'relevance'
+    subreddit_page.controller.trigger('4')
+    assert subreddit_page.content.order == 'new'
 
 
 def test_subreddit_order_top(subreddit_page, terminal):

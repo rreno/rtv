@@ -13,6 +13,7 @@ from six.moves.urllib.parse import urlparse, parse_qs
 from six.moves.BaseHTTPServer import HTTPServer
 
 from rtv.oauth import OAuthHelper, OAuthHandler
+from rtv.content import RequestHeaderRateLimiter
 from rtv.config import Config
 from rtv.packages import praw
 from rtv.terminal import Terminal
@@ -39,7 +40,7 @@ for name in ['vcr.matchers', 'vcr.stubs']:
 def pytest_addoption(parser):
     parser.addoption('--record-mode', dest='record_mode', default='none')
     parser.addoption('--refresh-token', dest='refresh_token',
-                     default='tests/refresh-token')
+                     default='~/.config/rtv/refresh-token')
 
 
 class MockStdscr(mock.MagicMock):
@@ -51,6 +52,9 @@ class MockStdscr(mock.MagicMock):
 
     def getyx(self):
         return self.y, self.x
+
+    def getbegyx(self):
+        return 0, 0
 
     def getmaxyx(self):
         return self.nlines, self.ncols
@@ -154,13 +158,17 @@ def stdscr():
             patch('curses.curs_set'),           \
             patch('curses.init_pair'),          \
             patch('curses.color_pair'),         \
+            patch('curses.has_colors'),         \
             patch('curses.start_color'),        \
             patch('curses.use_default_colors'):
         out = MockStdscr(nlines=40, ncols=80, x=0, y=0)
         curses.initscr.return_value = out
         curses.newwin.side_effect = lambda *args: out.derwin(*args)
         curses.color_pair.return_value = 23
+        curses.has_colors.return_value = True
         curses.ACS_VLINE = 0
+        curses.COLORS = 256
+        curses.COLOR_PAIRS = 256
         yield out
 
 
@@ -175,9 +183,11 @@ def reddit(vcr, request):
 
     with vcr.use_cassette(cassette_name):
         with patch('rtv.packages.praw.Reddit.get_access_information'):
+            handler = RequestHeaderRateLimiter()
             reddit = praw.Reddit(user_agent='rtv test suite',
                                  decode_html_entities=False,
-                                 disable_update_check=True)
+                                 disable_update_check=True,
+                                 handler=handler)
             # praw uses a global cache for requests, so we need to clear it
             # before each unit test. Otherwise we may fail to generate new
             # cassettes.
@@ -191,6 +201,7 @@ def reddit(vcr, request):
 @pytest.fixture()
 def terminal(stdscr, config):
     term = Terminal(stdscr, config=config)
+    term.set_theme()
     # Disable the python 3.4 addch patch so that the mock stdscr calls are
     # always made the same way
     term.addch = lambda window, *args: window.addch(*args)

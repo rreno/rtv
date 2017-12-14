@@ -79,15 +79,16 @@ def test_submission_page_construct(reddit, terminal, config, oauth):
     # Comment
     comment_data = page.content.get(0)
     text = comment_data['split_body'][0].encode('utf-8')
-    window.subwin.addstr.assert_any_call(1, 1, text)
+    window.subwin.addstr.assert_any_call(1, 1, text, curses.A_NORMAL)
 
     # More Comments
     comment_data = page.content.get(1)
     text = comment_data['body'].encode('utf-8')
-    window.subwin.addstr.assert_any_call(0, 1, text)
+    window.subwin.addstr.assert_any_call(0, 1, text, curses.A_NORMAL)
 
     # Cursor should not be drawn when the page is first opened
-    assert not window.subwin.chgat.called
+    assert not any(args[0][3] == curses.A_REVERSE
+                   for args in window.subwin.addch.call_args_list)
 
     # Reload with a smaller terminal window
     terminal.stdscr.ncols = 20
@@ -172,38 +173,18 @@ def test_submission_prompt_submission(submission_page, terminal, prompt):
         assert submission_page.content.order is None
 
 
-def test_submission_order_top(submission_page, terminal):
+def test_submission_order(submission_page):
 
-    # Open the menu
-    with mock.patch.object(terminal, 'show_notification'):
-        # Invalid selection
-        terminal.show_notification.return_value = ord('x')
-        submission_page.controller.trigger('2')
-        terminal.show_notification.assert_called_with('Invalid option')
-        assert submission_page.content.order is None
-
-        # Valid selection - sort by week
-        terminal.show_notification.reset_mock()
-        terminal.show_notification.return_value = ord('3')
-        submission_page.controller.trigger('2')
-        assert submission_page.content.order == 'top-week'
-
-
-def test_submission_order_controversial(submission_page, terminal):
-
-    # Open the menu
-    with mock.patch.object(terminal, 'show_notification'):
-        # Invalid selection
-        terminal.show_notification.return_value = ord('x')
-        submission_page.controller.trigger('5')
-        terminal.show_notification.assert_called_with('Invalid option')
-        assert submission_page.content.order is None
-
-        # Valid selection - sort by default
-        terminal.show_notification.reset_mock()
-        terminal.show_notification.return_value = ord('\n')
-        submission_page.controller.trigger('5')
-        assert submission_page.content.order == 'controversial'
+    submission_page.controller.trigger('1')
+    assert submission_page.content.order == 'hot'
+    submission_page.controller.trigger('2')
+    assert submission_page.content.order == 'top'
+    submission_page.controller.trigger('3')
+    assert submission_page.content.order == 'rising'
+    submission_page.controller.trigger('4')
+    assert submission_page.content.order == 'new'
+    submission_page.controller.trigger('5')
+    assert submission_page.content.order == 'controversial'
 
 
 def test_submission_move_top_bottom(submission_page):
@@ -264,7 +245,7 @@ def test_submission_comment_not_enough_space(submission_page, terminal):
 
     text = '(Not enough space to display)'.encode('ascii')
     window = terminal.stdscr.subwin
-    window.subwin.addstr.assert_any_call(6, 1, text)
+    window.subwin.addstr.assert_any_call(6, 1, text, curses.A_NORMAL)
 
 
 def test_submission_vote(submission_page, refresh_token):

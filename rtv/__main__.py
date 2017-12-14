@@ -23,13 +23,23 @@ except ImportError:
         sys.exit('Fatal Error: Your python distribution appears to be missing '
                  '_curses.so.\nWas it compiled without support for curses?')
 
+# If we want to override the $BROWSER variable that the python webbrowser
+# references, it needs to be done before the webbrowser module is imported
+# for the first time.
+webbrowser_import_warning = ('webbrowser' in sys.modules)
+RTV_BROWSER, BROWSER = os.environ.get('RTV_BROWSER'), os.environ.get('BROWSER')
+if RTV_BROWSER:
+    os.environ['BROWSER'] = RTV_BROWSER
+
 from . import docs
 from . import packages
 from .packages import praw
 from .config import Config, copy_default_config, copy_default_mailcap
+from .theme import Theme
 from .oauth import OAuthHelper
 from .terminal import Terminal
-from .objects import curses_session, Color
+from .content import RequestHeaderRateLimiter
+from .objects import curses_session, patch_webbrowser
 from .subreddit_page import SubredditPage
 from .exceptions import ConfigError
 from .__version__ import __version__
@@ -81,6 +91,10 @@ def main():
         copy_default_mailcap()
         return
 
+    if config['list_themes']:
+        Theme.print_themes()
+        return
+
     # Load the browsing history from previous sessions
     config.load_history()
 
@@ -110,8 +124,8 @@ def main():
             ('$XDG_CONFIG_HOME', os.getenv('XDG_CONFIG_HOME')),
             ('$RTV_EDITOR', os.getenv('RTV_EDITOR')),
             ('$RTV_URLVIEWER', os.getenv('RTV_URLVIEWER')),
-            ('$RTV_BROWSER', os.getenv('RTV_BROWSER')),
-            ('$BROWSER', os.getenv('BROWSER')),
+            ('$RTV_BROWSER', RTV_BROWSER),
+            ('$BROWSER', BROWSER),
             ('$PAGER', os.getenv('PAGER')),
             ('$VISUAL', os.getenv('VISUAL')),
             ('$EDITOR', os.getenv('EDITOR'))]
@@ -139,6 +153,8 @@ def main():
         warnings.warn(text)
         config['ascii'] = True
 
+    _logger.info('RTV module path: %s', os.path.abspath(__file__))
+
     # Check the praw version
     if packages.__praw_bundled__:
         _logger.info('Using packaged PRAW distribution, '
@@ -147,21 +163,42 @@ def main():
         _logger.info('Packaged PRAW not found, falling back to system '
                      'installed version %s', praw.__version__)
 
+    # Update the webbrowser module's default behavior
+    patch_webbrowser()
+    if webbrowser_import_warning:
+        _logger.warning('webbrowser module was unexpectedly imported before'
+                        '$BROWSER could be overwritten')
+
     # Construct the reddit user agent
     user_agent = docs.AGENT.format(version=__version__)
 
     try:
         with curses_session() as stdscr:
 
-            # Initialize global color-pairs with curses
-            if not config['monochrome']:
-                Color.init()
-
             term = Terminal(stdscr, config)
+
+            if config['monochrome'] or config['theme'] == 'monochrome':
+                _logger.info('Using monochrome theme')
+                theme = Theme(use_color=False)
+            elif config['theme'] and config['theme'] != 'default':
+                _logger.info('Loading theme: %s', config['theme'])
+                theme = Theme.from_name(config['theme'])
+            else:
+                # Set to None to let the terminal figure out which theme
+                # to use depending on if colors are supported or not
+                theme = None
+            term.set_theme(theme)
+
             with term.loader('Initializing', catch_exception=False):
                 reddit = praw.Reddit(user_agent=user_agent,
                                      decode_html_entities=False,
-                                     disable_update_check=True)
+                                     disable_update_check=True,
+                                     handler=RequestHeaderRateLimiter())
+
+            # Dial the request cache up from 30 seconds to 5 minutes
+            # I'm trying this out to make navigation back and forth
+            # between pages quicker, it may still need to be fine tuned.
+            reddit.config.api_request_delay = 300
 
             # Authorize on launch if the refresh token is present
             oauth = OAuthHelper(reddit, term, config)

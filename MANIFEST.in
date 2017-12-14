@@ -1,7 +1,8 @@
 include version.py
 include CHANGELOG.rst
 include AUTHORS.rst
-include README.rst
+include README.md
 include LICENSE
 include rtv.1
 include rtv/templates/*
+include rtv/themes/*
