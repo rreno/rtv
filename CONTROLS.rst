@@ -32,7 +32,7 @@ Once you are logged in your username will appear in the top-right corner of the 
 :``c``: Compose a new post or comment
 :``e``: Edit an existing post or comment
 :``d``: Delete an existing post or comment
-:``i``: Display new messages prompt
+:``i``: Check if you have any unread messages
 :``s``: View a list of subscribed subreddits
 :``S``: View a list of subscribed multireddits
 :``w``: Save a submission
@@ -41,12 +41,13 @@ Once you are logged in your username will appear in the top-right corner of the 
 Subreddit Mode
 --------------
 
-In subreddit mode you can browse through the top submissions on either the front page or a specific subreddit.
+In addition to the basic commands, the following actions can be performed when you're viewing a **subreddit** window.
 
 :``l`` or ``►``: Enter the selected submission
 :``o`` or ``ENTER``:  Open the submission link with your web browser
-:``f``: Open a prompt to search the current subreddit
 :``p``: Toggle between the front page and the last visited subreddit
+:``f``: Open a prompt to search the current subreddit
+:``/``: Open a prompt to switch subreddits
 
 The ``/`` prompt accepts subreddits in the following formats
 
@@ -66,7 +67,7 @@ The ``/`` prompt accepts subreddits in the following formats
 Submission Mode
 ---------------
 
-In submission mode you can view the self text for a submission and browse comments.
+In addition to the basic commands, the following actions can be performed when you're viewing a **submission** window.
 
 :``h`` or ``◄``: Return to the subreddit
 :``l`` or ``►``: Open the selected comment in a new window
