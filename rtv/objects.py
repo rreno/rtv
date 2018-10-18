@@ -27,36 +27,49 @@ _logger = logging.getLogger(__name__)
 
 def patch_webbrowser():
     """
-    Patch webbrowser on macOS to support setting BROWSER=firefox,
-    BROWSER=chrome, etc..
-
-    https://bugs.python.org/issue31348
+    Some custom patches on top of the python webbrowser module to fix
+    user reported bugs and limitations of the module.
     """
+
+    # https://bugs.python.org/issue31014
+    # https://github.com/michael-lazar/rtv/issues/588
+    def register_patch(name, klass, instance=None, update_tryorder=None, preferred=False):
+        """
+        Wrapper around webbrowser.register() that detects if the function was
+        invoked with the legacy function signature. If so, the signature is
+        fixed before passing it along to the underlying function.
+
+        Examples:
+            register(name, klass, instance, -1)
+            register(name, klass, instance, update_tryorder=-1)
+            register(name, klass, instance, preferred=True)
+        """
+        if update_tryorder is not None:
+            preferred = (update_tryorder == -1)
+        return webbrowser._register(name, klass, instance, preferred=preferred)
+
+    if sys.version_info[:2] >= (3, 7):
+        webbrowser._register = webbrowser.register
+        webbrowser.register = register_patch
 
     # Add support for browsers that aren't defined in the python standard library
     webbrowser.register('surf', None, webbrowser.BackgroundBrowser('surf'))
     webbrowser.register('vimb', None, webbrowser.BackgroundBrowser('vimb'))
+    webbrowser.register('qutebrowser', None, webbrowser.BackgroundBrowser('qutebrowser'))
 
     # Fix the opera browser, see https://github.com/michael-lazar/rtv/issues/476.
     # By default, opera will open a new tab in the current window, which is
     # what we want to do anyway.
     webbrowser.register('opera', None, webbrowser.BackgroundBrowser('opera'))
 
-    if sys.platform != 'darwin' or 'BROWSER' not in os.environ:
-        return
-
-    # This is a copy of what's at the end of webbrowser.py, except that
-    # it adds MacOSXOSAScript entries instead of GenericBrowser entries.
-    _userchoices = os.environ["BROWSER"].split(os.pathsep)
-    for cmdline in reversed(_userchoices):
-        if cmdline in ('safari', 'firefox', 'chrome', 'default'):
-            browser = webbrowser.MacOSXOSAScript(cmdline)
-            try:
+    # https://bugs.python.org/issue31348
+    # Use MacOS actionscript when opening the program defined in by $BROWSER
+    if sys.platform == 'darwin' and 'BROWSER' in os.environ:
+        _userchoices = os.environ["BROWSER"].split(os.pathsep)
+        for cmdline in reversed(_userchoices):
+            if cmdline in ('safari', 'firefox', 'chrome', 'default'):
+                browser = webbrowser.MacOSXOSAScript(cmdline)
                 webbrowser.register(cmdline, None, browser, update_tryorder=-1)
-            except TypeError:
-                # 3.7 nightly build changed the method signature
-                # pylint: disable=unexpected-keyword-arg
-                webbrowser.register(cmdline, None, browser, preferred=True)
 
 
 @contextmanager
@@ -159,6 +172,7 @@ class LoadScreen(object):
         (praw.errors.InvalidCaptcha, 'Error, captcha required'),
         (praw.errors.InvalidSubreddit, '{0.args[0]}'),
         (praw.errors.PRAWException, '{0.__class__.__name__}'),
+        (requests.exceptions.Timeout, 'HTTP request timed out'),
         (requests.exceptions.RequestException, '{0.__class__.__name__}'),
     ]
 
@@ -288,7 +302,7 @@ class LoadScreen(object):
 
                     # Break up the designated sleep interval into smaller
                     # chunks so we can more responsively check for interrupts.
-                    for _ in range(int(interval/0.01)):
+                    for _ in range(int(interval / 0.01)):
                         # Pressing escape triggers a keyboard interrupt
                         if self._terminal.getch() == self._terminal.ESCAPE:
                             os.kill(os.getpid(), signal.SIGINT)
@@ -456,12 +470,12 @@ class Navigator(object):
                 valid = True
             else:
                 # flip to the direction of movement
-                if ((direction > 0) & (self.inverted is True))\
-                   | ((direction < 0) & (self.inverted is False)):
-                    self.page_index += (self.step * (n_windows-1))
+                if ((direction > 0) & (self.inverted is True)) \
+                        | ((direction < 0) & (self.inverted is False)):
+                    self.page_index += (self.step * (n_windows - 1))
                     self.inverted = not self.inverted
                     self.cursor_index \
-                        = (n_windows-(direction < 0)) - self.cursor_index
+                        = (n_windows - (direction < 0)) - self.cursor_index
 
                 valid = False
                 adj = 0

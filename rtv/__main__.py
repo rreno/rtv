@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=wrong-import-position
+
 from __future__ import unicode_literals
 from __future__ import print_function
 
@@ -44,8 +46,8 @@ from .subreddit_page import SubredditPage
 from .exceptions import ConfigError, SubredditError
 from .__version__ import __version__
 
-
 _logger = logging.getLogger(__name__)
+
 
 # Pycharm debugging note:
 # You can use pycharm to debug a curses application by launching rtv in a
@@ -62,7 +64,7 @@ def main():
     logging.captureWarnings(True)
     if six.PY3:
         # These ones get triggered even when capturing warnings is turned on
-        warnings.simplefilter('ignore', ResourceWarning)  #pylint:disable=E0602
+        warnings.simplefilter('ignore', ResourceWarning)  # pylint:disable=E0602
 
     # Set the terminal title
     if os.getenv('DISPLAY'):
@@ -83,15 +85,11 @@ def main():
         config.keymap.set_bindings(bindings)
 
     if config['copy_config']:
-        copy_default_config()
-        return
+        return copy_default_config()
     if config['copy_mailcap']:
-        copy_default_mailcap()
-        return
-
+        return copy_default_mailcap()
     if config['list_themes']:
-        Theme.print_themes()
-        return
+        return Theme.print_themes()
 
     # Load the browsing history from previous sessions
     config.load_history()
@@ -119,12 +117,14 @@ def main():
         env = [
             ('$DISPLAY', os.getenv('DISPLAY')),
             ('$TERM', os.getenv('TERM')),
+            ('$LANG', os.getenv('LANG')),
             ('$XDG_CONFIG_HOME', os.getenv('XDG_CONFIG_HOME')),
             ('$XDG_DATA_HOME', os.getenv('$XDG_DATA_HOME')),
             ('$RTV_EDITOR', os.getenv('RTV_EDITOR')),
             ('$RTV_URLVIEWER', os.getenv('RTV_URLVIEWER')),
             ('$RTV_BROWSER', RTV_BROWSER),
             ('$BROWSER', BROWSER),
+            ('$RTV_PAGER', os.getenv('RTV_PAGER')),
             ('$PAGER', os.getenv('PAGER')),
             ('$VISUAL', os.getenv('VISUAL')),
             ('$EDITOR', os.getenv('EDITOR'))]
@@ -192,6 +192,7 @@ def main():
                 reddit = praw.Reddit(user_agent=user_agent,
                                      decode_html_entities=False,
                                      disable_update_check=True,
+                                     timeout=10,  # 10 second request timeout
                                      handler=RequestHeaderRateLimiter())
 
             # Dial the request cache up from 30 seconds to 5 minutes
@@ -201,8 +202,8 @@ def main():
 
             # Authorize on launch if the refresh token is present
             oauth = OAuthHelper(reddit, term, config)
-            if config.refresh_token:
-                oauth.authorize()
+            if config['autologin'] and config.refresh_token:
+                oauth.authorize(autologin=True)
 
             page = None
             name = config['subreddit']
@@ -246,5 +247,6 @@ def main():
         # Ensure sockets are closed to prevent a ResourceWarning
         if 'reddit' in locals():
             reddit.handler.http.close()
+
 
 sys.exit(main())

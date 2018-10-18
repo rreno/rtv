@@ -1,23 +1,30 @@
 language: python
-dist: trusty
-python:
-  - 2.7
-  - 3.4
-  - 3.5
-  - 3.6
-  - nightly
 matrix:
+  fast_finish: true
   allow_failures:
     - python: nightly
-  fast_finish: true
+  include:
+    - python: 2.7
+      dist: trusty
+    - python: 3.4
+      dist: trusty
+    - python: 3.5
+      dist: trusty
+    - python: 3.6
+      dist: trusty
+    - python: 3.7
+      dist: xenial
+      sudo: true
+    - python: nightly
+      dist: trusty
+
 before_install:
   - pip install --upgrade pip   
 install:
   - pip install .[test]
   - pip install .
 script:
-    # https://github.com/PyCQA/pylint/issues/1113
-  - if [ $TRAVIS_PYTHON_VERSION != 3.6 ] && [ $TRAVIS_PYTHON_VERSION != nightly ]; then pylint --rcfile .pylintrc -E rtv/; fi
+  - pylint --rcfile .pylintrc -E rtv/
   - coverage run -m py.test -v
 after_success:
   - coveralls

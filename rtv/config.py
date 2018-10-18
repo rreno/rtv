@@ -13,7 +13,6 @@ from six.moves import configparser
 from . import docs, __version__
 from .objects import KeyMap
 
-
 PACKAGE = os.path.dirname(__file__)
 HOME = os.path.expanduser('~')
 TEMPLATES = os.path.join(PACKAGE, 'templates')
@@ -30,7 +29,6 @@ THEMES = os.path.join(XDG_CONFIG_HOME, 'rtv', 'themes')
 
 
 def build_parser():
-
     parser = argparse.ArgumentParser(
         prog='rtv', description=docs.SUMMARY,
         epilog=docs.CONTROLS,
@@ -67,6 +65,9 @@ def build_parser():
         '--non-persistent', dest='persistent', action='store_const', const=False,
         help='Forget the authenticated user when the program exits')
     parser.add_argument(
+        '--no-autologin', dest='autologin', action='store_const', const=False,
+        help='Do not authenticate automatically on startup')
+    parser.add_argument(
         '--clear-auth', dest='clear_auth', action='store_const', const=True,
         help='Remove any saved user data before launching')
     parser.add_argument(
@@ -79,7 +80,10 @@ def build_parser():
         '--enable-media', dest='enable_media', action='store_const', const=True,
         help='Open external links using programs defined in the mailcap config')
     parser.add_argument(
-        '-V', '--version', action='version', version='rtv '+__version__)
+        '-V', '--version', action='version', version='rtv ' + __version__)
+    parser.add_argument(
+        '--no-flash', dest='flash', action='store_const', const=False,
+        help='Disable screen flashing')
     return parser
 
 
@@ -257,14 +261,16 @@ class Config(object):
         params = {
             'ascii': partial(config.getboolean, 'rtv'),
             'monochrome': partial(config.getboolean, 'rtv'),
-            'clear_auth': partial(config.getboolean, 'rtv'),
             'persistent': partial(config.getboolean, 'rtv'),
+            'autologin': partial(config.getboolean, 'rtv'),
+            'clear_auth': partial(config.getboolean, 'rtv'),
             'enable_media': partial(config.getboolean, 'rtv'),
             'history_size': partial(config.getint, 'rtv'),
             'oauth_redirect_port': partial(config.getint, 'rtv'),
             'oauth_scope': lambda x: rtv[x].split(','),
             'max_comment_cols': partial(config.getint, 'rtv'),
-            'hide_username': partial(config.getboolean, 'rtv')
+            'hide_username': partial(config.getboolean, 'rtv'),
+            'flash': partial(config.getboolean, 'rtv')
         }
 
         for key, func in params.items():

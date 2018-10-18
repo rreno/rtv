@@ -8,6 +8,7 @@ from datetime import datetime
 from timeit import default_timer as timer
 
 import six
+from bs4 import BeautifulSoup
 from kitchen.text.display import wrap
 
 from . import exceptions
@@ -148,6 +149,7 @@ class Content(object):
             data['type'] = 'Comment'
             data['level'] = comment.nested_level
             data['body'] = comment.body
+            data['html'] = comment.body_html
             data['created'] = cls.humanize_timestamp(comment.created_utc)
             data['score'] = '{0} pts'.format(
                 '-' if comment.score_hidden else comment.score)
@@ -155,7 +157,7 @@ class Content(object):
             data['is_author'] = (name == sub_name)
             data['flair'] = flair
             data['likes'] = comment.likes
-            data['gold'] = comment.gilded > 0
+            data['gold'] = comment.gilded
             data['permalink'] = permalink
             data['stickied'] = stickied
             data['hidden'] = False
@@ -185,9 +187,10 @@ class Content(object):
             data['created'] = cls.humanize_timestamp(comment.created_utc)
             data['saved'] = comment.saved
             data['stickied'] = stickied
-            data['gold'] = comment.gilded > 0
+            data['gold'] = comment.gilded
             data['author'] = author
             data['flair'] = flair
+            data['hidden'] = False
 
         return data
 
@@ -216,6 +219,7 @@ class Content(object):
         data['type'] = 'Submission'
         data['title'] = sub.title
         data['text'] = sub.selftext
+        data['html'] = sub.selftext_html
         data['created'] = cls.humanize_timestamp(sub.created_utc)
         data['created_long'] = cls.humanize_timestamp(sub.created_utc, True)
         data['comments'] = '{0} comments'.format(sub.num_comments)
@@ -226,10 +230,10 @@ class Content(object):
         data['flair'] = '[{0}]'.format(flair.strip(' []')) if flair else ''
         data['url_full'] = sub.url
         data['likes'] = sub.likes
-        data['gold'] = sub.gilded > 0
+        data['gold'] = sub.gilded
         data['nsfw'] = sub.over_18
         data['stickied'] = sub.stickied
-        data['hidden'] = False
+        data['hidden'] = sub.hidden
         data['xpost_subreddit'] = None
         data['index'] = None  # This is filled in later by the method caller
         data['saved'] = sub.saved
@@ -313,6 +317,22 @@ class Content(object):
             lines = wrap(paragraph, width=width) or ['']
             out.extend(lines)
         return out
+
+    @staticmethod
+    def extract_links(html):
+        """
+        Extract a list of hyperlinks from an HTMl document.
+        """
+        links = []
+        soup = BeautifulSoup(html, 'html.parser')
+        for link in soup.findAll('a'):
+            href = link.get('href')
+            if not href:
+                continue
+            if href.startswith('/'):
+                href = 'https://www.reddit.com' + href
+            links.append({'text': link.text, 'href': href})
+        return links
 
 
 class SubmissionContent(Content):
@@ -509,12 +529,41 @@ class SubredditContent(Content):
         if resource_root == 'user':
             resource_root = 'u'
         elif resource_root.startswith('user/'):
+            # Special check for multi-reddit resource roots
+            # E.g.
+            #     before: resource_root = "user/civilization_phaze_3/m"
+            #     After:  resource_root = "u/civilization_phaze_3/m"
             resource_root = 'u' + resource_root[4:]
 
-        # There should at most two parts left, the resource and the order
+        # The parts left should be in one of the following forms:
+        #    [resource]
+        #    [resource, order]
+        #    [resource, user_room, order]
+
+        user_rooms = ['overview', 'submitted', 'comments']
+        private_user_rooms = ['upvoted', 'downvoted', 'hidden', 'saved']
+        user_room = None
+
         if len(parts) == 1:
+            # E.g. /r/python
+            #    parts = ["python"]
+            #    resource = "python"
+            #    resource_order = None
             resource, resource_order = parts[0], None
+        elif resource_root == 'u' and len(parts) in [2, 3] \
+                and parts[1] in user_rooms + private_user_rooms:
+            # E.g. /u/spez/submitted/top ->
+            #    parts = ["spez", "submitted", "top"]
+            #    resource = "spez"
+            #    user_room = "submitted"
+            #    resource_order = "top"
+            resource, user_room = parts[:2]
+            resource_order = parts[2] if len(parts) == 3 else None
         elif len(parts) == 2:
+            # E.g. /r/python/top
+            #    parts = ["python", "top"]
+            #    resource = "python
+            #    resource_order = "top"
             resource, resource_order = parts
         else:
             raise InvalidSubreddit('`{}` is an invalid format'.format(name))
@@ -530,6 +579,8 @@ class SubredditContent(Content):
 
         display_order = order
         display_name = '/'.join(['', resource_root, resource])
+        if user_room and resource_root == 'u':
+            display_name += '/' + user_room
 
         # Split the order from the period E.g. controversial-all, top-hour
         if order and '-' in order:
@@ -542,7 +593,7 @@ class SubredditContent(Content):
             orders = ['relevance', 'top', 'comments', 'new', None]
             period_allowed = ['top', 'comments']
         else:
-            orders = ['hot', 'top', 'rising', 'new', 'controversial', None]
+            orders = ['hot', 'top', 'rising', 'new', 'controversial', 'gilded', None]
             period_allowed = ['top', 'controversial']
 
         if order not in orders:
@@ -602,22 +653,23 @@ class SubredditContent(Content):
             if not reddit.is_oauth_session():
                 raise exceptions.AccountError('Not logged in')
             else:
+                user_room = user_room or 'overview'
                 order = order or 'new'
-                submissions = reddit.user.get_overview(sort=order, limit=None)
-
-        elif resource_root == 'u' and resource == 'saved':
-            if not reddit.is_oauth_session():
-                raise exceptions.AccountError('Not logged in')
-            else:
-                order = order or 'new'
-                submissions = reddit.user.get_saved(sort=order, limit=None)
+                period = period or 'all'
+                method = getattr(reddit.user, 'get_%s' % user_room)
+                submissions = method(sort=order, time=period, limit=None)
 
         elif resource_root == 'u':
+            user_room = user_room or 'overview'
+            if user_room not in user_rooms:
+                # Tried to access a private room like "u/me/hidden" for a
+                # different redditor
+                raise InvalidSubreddit('Unavailable Resource')
             order = order or 'new'
             period = period or 'all'
             redditor = reddit.get_redditor(resource)
-            submissions = redditor.get_overview(
-                sort=order, time=period, limit=None)
+            method = getattr(redditor, 'get_%s' % user_room)
+            submissions = method(sort=order, time=period, limit=None)
 
         elif resource == 'front':
             if order in (None, 'hot'):
@@ -747,7 +799,7 @@ class SubscriptionContent(Content):
             name = 'Popular Subreddits'
             items = reddit.get_popular_subreddits(limit=None)
         else:
-            raise exceptions.SubscriptionError('Invalid type %s', content_type)
+            raise exceptions.SubscriptionError('Invalid type %s' % content_type)
 
         return cls(name, items, loader)
 
@@ -898,7 +950,7 @@ class RequestHeaderRateLimiter(DefaultHandler):
     def request(self, _cache_key, _cache_ignore, _cache_timeout, **kwargs):
         """
         This is a wrapper function that handles the caching of the request.
-        
+
         See DefaultHandler.with_cache for reference.
         """
         if _cache_key:

@@ -2,6 +2,7 @@
 from __future__ import unicode_literals
 
 import os
+import re
 import sys
 import time
 import shlex
@@ -21,6 +22,7 @@ import six
 from kitchen.text.display import textual_width_chop
 
 from . import exceptions, mime_parsers, content
+from .docs import TOKEN
 from .theme import Theme, ThemeList
 from .objects import LoadScreen
 
@@ -80,7 +82,7 @@ class Terminal(object):
         return 'o' if self.config['ascii'] else '•'
 
     @property
-    def guilded(self):
+    def gilded(self):
         return '*' if self.config['ascii'] else '✪'
 
     @property
@@ -118,12 +120,14 @@ class Terminal(object):
             self._display = display
         return self._display
 
-    @staticmethod
-    def flash():
+    def flash(self):
         """
         Flash the screen to indicate that an action was invalid.
         """
-        return curses.flash()
+        if self.config['flash']:
+            return curses.flash()
+        else:
+            return None
 
     @staticmethod
     def curs_set(val):
@@ -273,7 +277,10 @@ class Terminal(object):
             text = self.clean(text, n_cols)
             params = [] if attr is None else [attr]
             window.addstr(row, col, text, *params)
-        except curses.error as e:
+        except (curses.error, ValueError, TypeError) as e:
+            # Curses handling of strings with invalid null bytes (b'\00')
+            #   python 2: TypeError: "int,int,str"
+            #   python 3: ValueError: "embedded null byte"
             _logger.warning('add_line raised an exception')
             _logger.exception(str(e))
 
@@ -318,7 +325,7 @@ class Terminal(object):
         # Cut off the lines of the message that don't fit on the screen
         box_width = min(box_width, n_cols)
         box_height = min(box_height, n_rows)
-        message = message[:box_height-2]
+        message = message[:box_height - 2]
 
         s_row = (n_rows - box_height) // 2 + v_offset
         s_col = (n_cols - box_width) // 2 + h_offset
@@ -346,6 +353,63 @@ class Terminal(object):
         self.stdscr.refresh()
 
         return ch
+
+    def prompt_user_to_select_link(self, links):
+        """
+        Prompt the user to select a link from a list to open.
+
+        Return the link that was selected, or ``None`` if no link was selected.
+        """
+        link_pages = self.get_link_pages(links)
+        for n, link_page in enumerate(link_pages, start=1):
+            text = 'Select a link to open (page {} of {}):\n\n'
+            text = text.format(n, len(link_pages))
+            text += self.get_link_page_text(link_page)
+            if link_page is not link_pages[-1]:
+                text += '[9] next page...'
+
+            try:
+                choice = int(chr(self.show_notification(text)))
+            except ValueError:
+                return None
+            if link_page is not link_pages[-1] and choice == 9:
+                continue
+            elif choice == 0 or choice > len(link_page):
+                return None
+            return link_page[choice - 1]['href']
+
+    @staticmethod
+    def get_link_pages(links):
+        """
+        Given a list of links, separate them into pages that can be displayed
+        to the user and navigated using the 1-9 number keys. The last page
+        can contain up to 9 links, and all other pages can contain up to 8
+        links.
+        """
+        link_pages = []
+        i = 0
+        while i < len(links):
+            link_page = []
+            while i < len(links) and len(link_page) < 8:
+                link_page.append(links[i])
+                i += 1
+            if i == len(links) - 1:
+                link_page.append(links[i])
+                i += 1
+            link_pages.append(link_page)
+        return link_pages
+
+    @staticmethod
+    def get_link_page_text(link_page):
+        """
+        Construct the dialog box to display a list of links to the user.
+        """
+        text = ''
+        for i, link in enumerate(link_page):
+            capped_link_text = (link['text'] if len(link['text']) <= 20
+                                else link['text'][:19] + '…')
+            text += '[{}] [{}]({})\n'.format(i + 1, capped_link_text, link['href'])
+        return text
 
     def open_link(self, url):
         """
@@ -375,13 +439,15 @@ class Terminal(object):
         """
 
         if not self.config['enable_media']:
-            return self.open_browser(url)
+            self.open_browser(url)
+            return
 
         try:
             with self.loader('Checking link', catch_exception=False):
                 command, entry = self.get_mailcap_entry(url)
         except exceptions.MailcapEntryNotFound:
-            return self.open_browser(url)
+            self.open_browser(url)
+            return
 
         _logger.info('Executing command: %s', command)
         needs_terminal = 'needsterminal' in entry
@@ -553,12 +619,17 @@ class Terminal(object):
 
     def open_pager(self, data, wrap=None):
         """
-        View a long block of text using the system's default pager.
+        View a long block of text using an external pager / viewer.  The setting
+        of the RTV_PAGER variable will be used if set, otherwise the system's
+        default pager is chosen, finally defaulting to 'less' if both RTV_PAGER
+        and PAGER is unset in the calling environment.
 
         The data string will be piped directly to the pager.
         """
 
-        pager = os.getenv('PAGER') or 'less'
+        pager = os.getenv('RTV_PAGER')
+        if pager is None:
+                pager = os.getenv('PAGER') or 'less'
         command = shlex.split(pager)
 
         if wrap:
@@ -582,10 +653,11 @@ class Terminal(object):
         """
         Open a file for editing using the system's default editor.
 
-        After the file has been altered, the text will be read back and lines
-        starting with '#' will be stripped. If an error occurs inside of the
-        context manager, the file will be preserved. Otherwise, the file will
-        be deleted when the context manager closes.
+        After the file has been altered, the text will be read back and the
+        HTML comment tag <!--INSRUCTIONS --> will be stripped. If an error
+        occurs inside of the context manager, the file will be preserved so
+        users can recover their data. Otherwise, the file will be deleted when
+        the context manager closes.
 
         Params:
             data (str): If provided, text will be written to the file before
@@ -622,8 +694,8 @@ class Terminal(object):
             self.show_notification('Could not open file with %s' % editor)
 
         with codecs.open(filepath, 'r', 'utf-8') as fp:
-            text = ''.join(line for line in fp if not line.startswith('#'))
-            text = text.rstrip()
+            text = fp.read()
+            text = self.strip_instructions(text)
 
         try:
             yield text
@@ -731,7 +803,7 @@ class Terminal(object):
         n_rows, n_cols = self.stdscr.getmaxyx()
         v_offset, h_offset = self.stdscr.getbegyx()
         ch, attr = str(' '), self.attr('Prompt')
-        prompt = self.clean(prompt, n_cols-1)
+        prompt = self.clean(prompt, n_cols - 1)
 
         # Create a new window to draw the text at the bottom of the screen,
         # so we can erase it when we're done.
@@ -809,13 +881,26 @@ class Terminal(object):
 
         # Prune empty lines at the bottom of the textbox.
         for item in stack[::-1]:
-            if len(item) == 0:
+            if not item:
                 stack.pop()
             else:
                 break
 
         out = '\n'.join(stack)
         return out
+
+    @staticmethod
+    def strip_instructions(text):
+        """
+        Remove instructional HTML comment tags inserted by RTV.
+
+        We used to use # to annotate comments, but it conflicted with the
+        header tag for markdown, which some people use to format their posts.
+        """
+        # Pattern can span multiple lines, allows dot to match newline chars
+        flags = re.MULTILINE | re.DOTALL
+        pattern = '<!--{token}(.*?){token}-->'.format(token=TOKEN)
+        return re.sub(pattern, '', text, flags=flags).strip()
 
     def clear_screen(self):
         """
@@ -872,7 +957,7 @@ class Terminal(object):
         Check that the terminal supports the provided theme, and applies
         the theme to the terminal if possible.
 
-        If the terminal doesn't support the theme, this falls back to the 
+        If the terminal doesn't support the theme, this falls back to the
         default theme. The default theme only requires 8 colors so it
         should be compatible with any terminal that supports basic colors.
         """

@@ -19,13 +19,13 @@ class SubredditController(PageController):
 
 class SubredditPage(Page):
 
+    BANNER = docs.BANNER_SUBREDDIT
     FOOTER = docs.FOOTER_SUBREDDIT
 
     def __init__(self, reddit, term, config, oauth, name):
         """
         Params:
             name (string): Name of subreddit to open
-            url (string): Optional submission to load upon start
         """
         super(SubredditPage, self).__init__(reddit, term, config, oauth)
 
@@ -100,6 +100,13 @@ class SubredditPage(Page):
                 self.term.show_notification('Invalid option')
             else:
                 self.refresh_content(order=order)
+
+    @SubredditController.register(Command('SORT_GILDED'))
+    def sort_content_gilded(self):
+        if self.content.query:
+            self.term.flash()
+        else:
+            self.refresh_content(order='gilded')
 
     @SubredditController.register(Command('SUBREDDIT_SEARCH'))
     def search_subreddit(self, name=None):
@@ -293,6 +300,21 @@ class SubredditPage(Page):
             self.content = page.selected_subreddit
             self.nav = Navigator(self.content.get)
 
+    @SubredditController.register(Command('SUBREDDIT_HIDE'))
+    @logged_in
+    def hide(self):
+        data = self.get_selected_item()
+        if not hasattr(data["object"], 'hide'):
+            self.term.flash()
+        elif data['hidden']:
+            with self.term.loader('Unhiding'):
+                data['object'].unhide()
+                data['hidden'] = False
+        else:
+            with self.term.loader('Hiding'):
+                data['object'].hide()
+                data['hidden'] = True
+
     def _draw_item(self, win, data, inverted):
 
         n_rows, n_cols = win.getmaxyx()
@@ -347,6 +369,11 @@ class SubredditPage(Page):
                 self.term.add_space(win)
                 self.term.add_line(win, '[saved]', attr=attr)
 
+            if data['hidden']:
+                attr = self.term.attr('Hidden')
+                self.term.add_space(win)
+                self.term.add_line(win, '[hidden]', attr=attr)
+
             if data['stickied']:
                 attr = self.term.attr('Stickied')
                 self.term.add_space(win)
@@ -355,7 +382,9 @@ class SubredditPage(Page):
             if data['gold']:
                 attr = self.term.attr('Gold')
                 self.term.add_space(win)
-                self.term.add_line(win, self.term.guilded, attr=attr)
+                count = 'x{}'.format(data['gold']) if data['gold'] > 1 else ''
+                text = self.term.gilded + count
+                self.term.add_line(win, text, attr=attr)
 
             if data['nsfw']:
                 attr = self.term.attr('NSFW')

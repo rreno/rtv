@@ -31,6 +31,7 @@ SUBREDDIT_PROMPTS = OrderedDict([
     ('top', ('pics/top', '/r/pics', 'top')),
     ('rising', ('r/pics/rising', '/r/pics', 'rising')),
     ('controversial', ('/r/pics/controversial', '/r/pics', 'controversial')),
+    ('gilded', ('/r/pics/gilded', '/r/pics', 'gilded')),
     ('top-day', ('/r/pics/top-day', '/r/pics', 'top-day')),
     ('top-hour', ('/r/pics/top-hour', '/r/pics', 'top-hour')),
     ('top-month', ('/r/pics/top-month', '/r/pics', 'top-month')),
@@ -47,6 +48,9 @@ SUBREDDIT_PROMPTS = OrderedDict([
     ('user-1', ('/u/spez', '/u/spez', None)),
     ('user-new', ('/u/spez/new', '/u/spez', 'new')),
     ('user-top-all', ('/u/spez/top-all', '/u/spez', 'top-all')),
+    ('user-overview', ('/u/spez/overview', '/u/spez/overview', None)),
+    ('user-submitted', ('/u/spez/submitted', '/u/spez/submitted', None)),
+    ('user-comments', ('/u/spez/comments', '/u/spez/comments', None)),
     ('multi-0', ('/user/multi-mod/m/art', '/u/multi-mod/m/art', None)),
     ('multi-1', ('/u/multi-mod/m/art', '/u/multi-mod/m/art', None)),
     ('multi-top', ('/u/multi-mod/m/art/top', '/u/multi-mod/m/art', 'top')),
@@ -62,7 +66,10 @@ SUBREDDIT_AUTH_PROMPTS = OrderedDict([
     ('me-1', ('/u/me', '/u/me', None)),
     ('me-top', ('/u/me/top', '/u/me', 'top')),
     ('me-top-all', ('/u/me/top-all', '/u/me', 'top-all')),
-    ('user-saved', ('/u/saved', '/u/saved', None)),
+    ('me-saved', ('/u/me/saved', '/u/me/saved', None)),
+    ('me-upvoted', ('/u/me/upvoted', '/u/me/upvoted', None)),
+    ('me-downvoted', ('/u/me/downvoted', '/u/me/downvoted', None)),
+    ('me-hidden', ('/u/me/hidden', '/u/me/hidden', None)),
     ('me-multi', ('/u/me/m/redditpets/top-all', '/u/{username}/m/redditpets', 'top-all')),
 ])
 
@@ -190,6 +197,7 @@ def test_content_flatten_comments_3(reddit):
             self.id = comment_id
             self.parent_id = parent_id
             self.replies = []
+
         def __repr__(self):
             return '%s (%s)' % (self.id, self.parent_id)
 
@@ -455,6 +463,14 @@ def test_content_subreddit_random(reddit, terminal):
     assert content.name != name
 
 
+def test_content_subreddit_gilded(reddit, terminal):
+
+    name = '/r/python/gilded'
+    content = SubredditContent.from_name(reddit, name, terminal.loader)
+    assert content.order == 'gilded'
+    assert content.get(0)['object'].gilded
+
+
 def test_content_subreddit_me(reddit, oauth, refresh_token, terminal):
 
     # Not logged in
@@ -473,7 +489,6 @@ def test_content_subreddit_me(reddit, oauth, refresh_token, terminal):
         assert isinstance(terminal.loader.exception,
                           exceptions.NoSubmissionsError)
         assert terminal.loader.exception.name == '/u/me'
-
 
 def test_content_subreddit_nsfw_filter(reddit, oauth, refresh_token, terminal):
 
@@ -543,14 +558,14 @@ def test_content_subreddit_saved(reddit, oauth, refresh_token, terminal):
 
     # Not logged in
     with terminal.loader():
-        SubredditContent.from_name(reddit, '/u/saved', terminal.loader)
+        SubredditContent.from_name(reddit, '/u/me/saved', terminal.loader)
     assert isinstance(terminal.loader.exception, exceptions.AccountError)
 
     # Logged in
     oauth.config.refresh_token = refresh_token
     oauth.authorize()
     with terminal.loader():
-        SubredditContent.from_name(reddit, '/u/saved', terminal.loader)
+        SubredditContent.from_name(reddit, '/u/me/saved', terminal.loader)
 
 
 def test_content_subscription_empty(reddit, terminal):
@@ -607,3 +622,17 @@ def test_content_rate_limit(reddit, oauth, refresh_token):
     # Even though the headers were returned, the rate limiting should
     # still not be triggering a delay for the next request
     assert reddit.handler.next_request_timestamp is None
+
+
+def test_content_extract_links():
+
+    # Should handle relative & absolute links, should ignore empty links.
+    html = """
+    <a href='/'>Home Page</a>
+    <a href='https://www.github.com'>Github</a>
+    <a>Blank</a>
+    """
+    assert Content.extract_links(html) == [
+        {'href': 'https://www.reddit.com/', 'text': 'Home Page'},
+        {'href': 'https://www.github.com', 'text': 'Github'}
+    ]

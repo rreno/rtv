@@ -17,6 +17,7 @@ class SubmissionController(PageController):
 
 class SubmissionPage(Page):
 
+    BANNER = docs.BANNER_SUBMISSION
     FOOTER = docs.FOOTER_SUBMISSION
 
     def __init__(self, reddit, term, config, oauth, url=None, submission=None):
@@ -137,17 +138,40 @@ class SubmissionPage(Page):
     @SubmissionController.register(Command('SUBMISSION_OPEN_IN_BROWSER'))
     def open_link(self):
         """
-        Open the selected item with the web browser 
-        """
+        Open the link contained in the selected item.
 
+        If there is more than one link contained in the item, prompt the user
+        to choose which link to open.
+        """
         data = self.get_selected_item()
         if data['type'] == 'Submission':
-            self.term.open_link(data['url_full'])
-            self.config.history.add(data['url_full'])
+            opened_link = self.prompt_and_open_link(data)
+            if opened_link is not None:
+                self.config.history.add(opened_link)
         elif data['type'] == 'Comment' and data['permalink']:
-            self.term.open_browser(data['permalink'])
+            self.prompt_and_open_link(data)
         else:
             self.term.flash()
+
+    def prompt_and_open_link(self, data):
+        url_full = data.get('url_full')
+        if url_full and url_full != data['permalink']:
+            # The item is a link-only submission that won't contain text
+            link = data['url_full']
+        else:
+            extracted_links = self.content.extract_links(data['html'])
+            if not extracted_links:
+                # Only one selection to choose from, so just pick it
+                link = data['permalink']
+            else:
+                # Let the user decide which link to open
+                links = [{'text': 'Permalink', 'href': data['permalink']}]
+                links += extracted_links
+                link = self.term.prompt_user_to_select_link(links)
+
+        if link is not None:
+            self.term.open_link(link)
+        return link
 
     @SubmissionController.register(Command('SUBMISSION_OPEN_IN_PAGER'))
     def open_pager(self):
@@ -191,7 +215,7 @@ class SubmissionPage(Page):
 
         # Construct the text that will be displayed in the editor file.
         # The post body will be commented out and added for reference
-        lines = ['#  |' + line for line in body.split('\n')]
+        lines = ['  |' + line for line in body.split('\n')]
         content = '\n'.join(lines)
         comment_info = docs.COMMENT_FILE.format(
             author=data['author'],
@@ -344,7 +368,9 @@ class SubmissionPage(Page):
             if data['gold']:
                 attr = self.term.attr('Gold')
                 self.term.add_space(win)
-                self.term.add_line(win, self.term.guilded, attr=attr)
+                count = 'x{}'.format(data['gold']) if data['gold'] > 1 else ''
+                text = self.term.gilded + count
+                self.term.add_line(win, text, attr=attr)
 
             if data['stickied']:
                 attr = self.term.attr('Stickied')
@@ -356,7 +382,7 @@ class SubmissionPage(Page):
                 self.term.add_space(win)
                 self.term.add_line(win, '[saved]', attr=attr)
 
-        for row, text in enumerate(split_body, start=offset+1):
+        for row, text in enumerate(split_body, start=offset + 1):
             attr = self.term.attr('CommentText')
             if row in valid_rows:
                 self.term.add_line(win, text, row, 1, attr=attr)
@@ -445,7 +471,9 @@ class SubmissionPage(Page):
         if data['gold']:
             attr = self.term.attr('Gold')
             self.term.add_space(win)
-            self.term.add_line(win, self.term.guilded, attr=attr)
+            count = 'x{}'.format(data['gold']) if data['gold'] > 1 else ''
+            text = self.term.gilded + count
+            self.term.add_line(win, text, attr=attr)
 
         if data['nsfw']:
             attr = self.term.attr('NSFW')

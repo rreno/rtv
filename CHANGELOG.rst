@@ -2,6 +2,10 @@
 RTV Changelog
 =============
 
+.. _1.24.0: http://github.com/michael-lazar/rtv/releases/tag/v1.24.0
+.. _1.23.0: http://github.com/michael-lazar/rtv/releases/tag/v1.23.0
+.. _1.22.1: http://github.com/michael-lazar/rtv/releases/tag/v1.22.1
+.. _1.22.0: http://github.com/michael-lazar/rtv/releases/tag/v1.22.0
 .. _1.21.0: http://github.com/michael-lazar/rtv/releases/tag/v1.21.0
 .. _1.20.0: http://github.com/michael-lazar/rtv/releases/tag/v1.20.0
 .. _1.19.0: http://github.com/michael-lazar/rtv/releases/tag/v1.19.0
@@ -32,6 +36,83 @@ RTV Changelog
 .. _1.2.2: http://github.com/michael-lazar/rtv/releases/tag/v1.2.2
 .. _1.2.1: http://github.com/michael-lazar/rtv/releases/tag/v1.2.1
 .. _1.2: http://github.com/michael-lazar/rtv/releases/tag/v1.2
+
+--------------------
+1.24.0_ (2018-08-12)
+--------------------
+
+Features
+
+* Python 3.7 is now officially supported.
+* Lines that start with the hash symbol (#) are no longer ignored when
+  composing posts in your editor. This allows # to be used with Reddit's
+  markdown parser to denote headers.
+* Added a new *dark colorblind* theme.
+* Added support for the ``$RTV_PAGER`` environment variable, which can be
+  used to set a unique PAGER for rtv.
+* Added the ability to sort submissions by **guilded**.
+
+Bugfixes
+
+* Fixed a crash when setting the ``$BROWSER`` with python 3.7.
+* Improved the error message when attempting to vote on an archived post.
+* Cleaned up several outdated MIME parsers. Removed the vidme, twitch,
+  oddshot, and imgtc parsers. Fixed the liveleak and reddit video parsers.
+
+
+--------------------
+1.23.0_ (2018-06-24)
+--------------------
+
+Features
+
+* Submissions can now be marked as *[hidden]* using the ``space`` key. Hidden
+  submissions will be removed from the feed when the page is reloaded.
+* New MIME parsers have been added for vimeo.com and streamja.com.
+* Added support for opening links with **qutebrowser**.
+
+Bugfixes
+
+* Fixed unhandled OAuth server log messages being dumped to stdout.
+* Fixed the application crashing when performing rate-limited requests.
+* Fixed crash when displaying posts that contain null byte characters.
+
+Documentation
+
+* Added README badge for *saythanks.io*.
+* Updated the mailcap template to support *v.redd.it* links.
+
+
+--------------------
+1.22.1_ (2018-03-11)
+--------------------
+
+I forgot to check in a commit before publishing the 1.22.0 release (whoops!)
+
+Bugfixes
+
+* Updated the ``__version__.py`` file to report the current version.
+* Added the missing v1.22.0 entry to the CHANGELOG.
+
+--------------------
+1.22.0_ (2018-03-07)
+--------------------
+
+Features
+
+* Added the ``--no-flash`` option to disable terminal flashing.
+
+Bugfixes
+
+* Fixed automatically exiting on launch when trying to open an invalid
+  subreddit with the ``-s`` flag.
+* Fixed error handling for HTTP request timeouts when checking for new
+  messages in the inbox.
+* Fixed a typo in the sample theme config.
+
+Documentation
+
+* Added the FreeBSD package to the README.
 
 --------------------
 1.21.0_ (2017-12-30)

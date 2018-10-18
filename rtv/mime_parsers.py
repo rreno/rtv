@@ -56,18 +56,49 @@ class OpenGraphMIMEParser(BaseMIMEParser):
         page = requests.get(url)
         soup = BeautifulSoup(page.content, 'html.parser')
         for og_type in ['video', 'image']:
-            tag = soup.find('meta',
-                    attrs={'property':'og:' + og_type + ':secure_url'}) or \
-                  soup.find('meta', attrs={'property': 'og:' + og_type})
+            prop = 'og:' + og_type + ':secure_url'
+            tag = soup.find('meta', attrs={'property': prop})
+            if not tag:
+                prop = 'og:' + og_type
+                tag = soup.find('meta', attrs={'property': prop})
             if tag:
                 return BaseMIMEParser.get_mimetype(tag.get('content'))
+
         return url, None
+
+
+class VideoTagMIMEParser(BaseMIMEParser):
+    """
+    <video width="320" height="240" controls>
+        <source src="movie.mp4" res="HD" type="video/mp4">
+        <source src="movie.mp4" res="SD" type="video/mp4">
+        <source src="movie.ogg" type="video/ogg">
+    </video>
+    """
+    pattern = re.compile(r'.*$')
+
+    @staticmethod
+    def get_mimetype(url):
+        page = requests.get(url)
+        soup = BeautifulSoup(page.content, 'html.parser')
+
+        # TODO: Handle pages with multiple videos
+        video = soup.find('video')
+        source = None
+        if video:
+            source = video.find('source', attr={'res': 'HD'})
+            source = source or video.find('source', attr={'type': 'video/mp4'})
+            source = source or video.find('source')
+        if source:
+            return source.get('src'), source.get('type')
+        else:
+            return url, None
 
 
 class GfycatMIMEParser(BaseMIMEParser):
     """
     Gfycat provides a primitive json api to generate image links. URLs can be
-    downloaded as either gif, webm, or mjpg. Webm was selected because it's
+    downloaded as either gif, mp4, webm, or mjpg. Mp4 was selected because it's
     fast and works with VLC.
 
         https://gfycat.com/api
@@ -82,8 +113,8 @@ class GfycatMIMEParser(BaseMIMEParser):
         parts = url.replace('gifs/detail/', '').split('/')
         api_url = '/'.join(parts[:-1] + ['cajax', 'get'] + parts[-1:])
         resp = requests.get(api_url)
-        image_url = resp.json()['gfyItem']['webmUrl']
-        return image_url, 'video/webm'
+        image_url = resp.json()['gfyItem']['mp4Url']
+        return image_url, 'video/mp4'
 
 
 class YoutubeMIMEParser(BaseMIMEParser):
@@ -94,6 +125,18 @@ class YoutubeMIMEParser(BaseMIMEParser):
     pattern = re.compile(
         r'(?:https?://)?(m\.)?(?:youtu\.be/|(?:www\.)?youtube\.com/watch'
         r'(?:\.php)?\'?.*v=)([a-zA-Z0-9\-_]+)')
+
+    @staticmethod
+    def get_mimetype(url):
+        return url, 'video/x-youtube'
+
+
+class VimeoMIMEParser(BaseMIMEParser):
+    """
+    Vimeo videos can be streamed with vlc or downloaded with youtube-dl.
+    Assign a custom mime-type so they can be referenced in mailcap.
+    """
+    pattern = re.compile(r'https?://(www\.)?vimeo\.com/\d+$')
 
     @staticmethod
     def get_mimetype(url):
@@ -143,13 +186,14 @@ class RedditVideoMIMEParser(BaseMIMEParser):
         page = requests.get(request_url)
         soup = BeautifulSoup(page.content, 'html.parser')
         if not soup.find('representation', attrs={'mimetype': 'audio/mp4'}):
-            reps = soup.find_all('representation',
-                                 attrs={'mimetype': 'video/mp4'})
-            rep = sorted(reps, reverse=True,
-                         key=lambda t: int(t.get('bandwidth')))[0]
-            return url + '/' + rep.find('baseurl').text, 'video/mp4'
-        else:
-            return request_url, 'video/x-youtube'
+            reps = soup.find_all('representation', attrs={'mimetype': 'video/mp4'})
+            reps = sorted(reps, reverse=True, key=lambda t: int(t.get('bandwidth')))
+            if reps:
+                url_suffix = reps[0].find('baseurl')
+                if url_suffix:
+                    return url + '/' + url_suffix.text, 'video/mp4'
+
+        return request_url, 'video/x-youtube'
 
 
 class ImgurApiMIMEParser(BaseMIMEParser):
@@ -228,7 +272,9 @@ class ImgurApiMIMEParser(BaseMIMEParser):
         Attempt to use one of the scrapers if the API doesn't work
         """
         if domain == 'album':
-            return ImgurScrapeAlbumMIMEParser.get_mimetype(url)
+            # The old Imgur album scraper has stopped working and I haven't
+            # put in the effort to figure out why
+            return url, None
         else:
             return ImgurScrapeMIMEParser.get_mimetype(url)
 
@@ -261,40 +307,6 @@ class ImgurScrapeMIMEParser(BaseMIMEParser):
         return BaseMIMEParser.get_mimetype(url)
 
 
-class ImgurScrapeAlbumMIMEParser(BaseMIMEParser):
-    """
-    Imgur albums can contain several images, which need to be scraped from the
-    landing page. Assumes the following html structure:
-
-        <div class="post-image">
-            <a href="//i.imgur.com/L3Lfp1O.jpg" class="zoom">
-                <img class="post-image-placeholder"
-                     src="//i.imgur.com/L3Lfp1Og.jpg" alt="Close up">
-                <img class="js-post-image-thumb"
-                     src="//i.imgur.com/L3Lfp1Og.jpg" alt="Close up">
-            </a>
-        </div>
-    """
-    pattern = re.compile(r'https?://(w+\.)?(m\.)?imgur\.com/a(lbum)?/[^.]+$')
-
-    @staticmethod
-    def get_mimetype(url):
-        page = requests.get(url)
-        soup = BeautifulSoup(page.content, 'html.parser')
-
-        urls = []
-        for div in soup.find_all('div', class_='post-image'):
-            img = div.find('img')
-            src = img.get('src') if img else None
-            if src:
-                urls.append('http:{0}'.format(src))
-
-        if urls:
-            return " ".join(urls), 'image/x-imgur-album'
-        else:
-            return url, None
-
-
 class InstagramMIMEParser(OpenGraphMIMEParser):
     """
     Instagram uses the Open Graph protocol
@@ -307,49 +319,6 @@ class StreamableMIMEParser(OpenGraphMIMEParser):
     Streamable uses the Open Graph protocol
     """
     pattern = re.compile(r'https?://(www\.)?streamable\.com/[^.]+$')
-
-
-class TwitchMIMEParser(BaseMIMEParser):
-    """
-    Non-streaming videos hosted by twitch.tv
-    """
-    pattern = re.compile(r'https?://clips\.?twitch\.tv/[^.]+$')
-
-    @staticmethod
-    def get_mimetype(url):
-        page = requests.get(url)
-        soup = BeautifulSoup(page.content, 'html.parser')
-        tag = soup.find('meta', attrs={'name': 'twitter:image'})
-        thumbnail = tag.get('content')
-        suffix = '-preview.jpg'
-        if thumbnail.endswith(suffix):
-            return thumbnail.replace(suffix, '.mp4'), 'video/mp4'
-        else:
-            return url, None
-
-
-class OddshotMIMEParser(OpenGraphMIMEParser):
-    """
-    Oddshot uses the Open Graph protocol
-    """
-    pattern = re.compile(r'https?://oddshot\.tv/s(hot)?/[^.]+$')
-
-
-class VidmeMIMEParser(BaseMIMEParser):
-    """
-    Vidme provides a json api.
-
-    https://doc.vid.me
-    """
-    pattern = re.compile(r'https?://(www\.)?vid\.me/[^.]+$')
-
-    @staticmethod
-    def get_mimetype(url):
-        resp = requests.get('https://api.vid.me/videoByUrl?url=' + url)
-        if resp.status_code == 200 and resp.json()['status']:
-            return resp.json()['video']['complete_url'], 'video/mp4'
-        else:
-            return url, None
 
 
 class LiveleakMIMEParser(BaseMIMEParser):
@@ -371,24 +340,28 @@ class LiveleakMIMEParser(BaseMIMEParser):
         urls = []
         videos = soup.find_all('video')
         for vid in videos:
-            source = vid.find('source', attr={'res': 'HD'}) \
-                        or vid.find('source')
+            source = vid.find('source', attr={'res': 'HD'})
+            source = source or vid.find('source')
             if source:
                 urls.append((source.get('src'), source.get('type')))
+
         # TODO: Handle pages with multiple videos
         if urls:
             return urls[0]
-        else:
-            iframe = soup.find_all(lambda t: t.name == 'iframe' and
-                                    'youtube.com' in t['src'])
-            if iframe:
-                return YoutubeMIMEParser.get_mimetype(iframe[0]['src'].strip('/'))
-            else:
-                return url, None
+
+        def filter_iframe(t):
+            return t.name == 'iframe' and 'youtube.com' in t['src']
+
+        iframe = soup.find_all(filter_iframe)
+        if iframe:
+            return YoutubeMIMEParser.get_mimetype(iframe[0]['src'].strip('/'))
+
+        return url, None
 
 
 class ClippitUserMIMEParser(BaseMIMEParser):
     """
+    Clippit uses a video player container
     """
     pattern = re.compile(r'https?://(www\.)?clippituser\.tv/c/.+$')
 
@@ -396,9 +369,14 @@ class ClippitUserMIMEParser(BaseMIMEParser):
     def get_mimetype(url):
         page = requests.get(url)
         soup = BeautifulSoup(page.content, 'html.parser')
-        tag = soup.find(id='jwplayer-container')
-        quality = ['data-{}-file'.format(_) for _ in ['hd', 'sd']]
-        return tag.get(quality[0]), 'video/mp4'
+        tag = soup.find(id='player-container')
+        if tag:
+            quality = ['data-{}-file'.format(_) for _ in ['hd', 'sd']]
+            new_url = tag.get(quality[0])
+            if new_url:
+                return new_url, 'video/mp4'
+
+        return url, None
 
 
 class GifsMIMEParser(OpenGraphMIMEParser):
@@ -413,13 +391,6 @@ class GiphyMIMEParser(OpenGraphMIMEParser):
     Giphy.com uses the Open Graph protocol
     """
     pattern = re.compile(r'https?://(www\.)?giphy\.com/gifs/.+$')
-
-
-class ImgtcMIMEParser(OpenGraphMIMEParser):
-    """
-    imgtc.com uses the Open Graph protocol
-    """
-    pattern = re.compile(r'https?://(www\.)?imgtc\.com/w/.+$')
 
 
 class ImgflipMIMEParser(OpenGraphMIMEParser):
@@ -447,8 +418,15 @@ class FlickrMIMEParser(OpenGraphMIMEParser):
     """
     Flickr uses the Open Graph protocol
     """
-    pattern = re.compile(r'https?://(www\.)?flickr\.com/photos/[^/]+/[^/]+/?$')
     # TODO: handle albums/photosets (https://www.flickr.com/services/api)
+    pattern = re.compile(r'https?://(www\.)?flickr\.com/photos/[^/]+/[^/]+/?$')
+
+
+class StreamjaMIMEParser(VideoTagMIMEParser):
+    """
+    Embedded HTML5 video element
+    """
+    pattern = re.compile(r'https?://(www\.)?streamja\.com/[^/]+/?$')
 
 
 class WorldStarHipHopMIMEParser(BaseMIMEParser):
@@ -466,38 +444,39 @@ class WorldStarHipHopMIMEParser(BaseMIMEParser):
         page = requests.get(url)
         soup = BeautifulSoup(page.content, 'html.parser')
 
-        source = soup.find_all(lambda t: t.name == 'source' and
-                                t['src'] and t['type'] == 'video/mp4')
+        def filter_source(t):
+            return t.name == 'source' and t['src'] and t['type'] == 'video/mp4'
+
+        source = soup.find_all(filter_source)
         if source:
             return source[0]['src'], 'video/mp4'
-        else:
-            iframe = soup.find_all(lambda t: t.name == 'iframe' and
-                                    'youtube.com' in t['src'])
-            if iframe:
-                return YoutubeMIMEParser.get_mimetype(iframe[0]['src'])
-            else:
-                return url, None
 
+        def filter_iframe(t):
+            return t.name == 'iframe' and 'youtube.com' in t['src']
+
+        iframe = soup.find_all(filter_iframe)
+        if iframe:
+            return YoutubeMIMEParser.get_mimetype(iframe[0]['src'])
+
+        return url, None
 
 
 # Parsers should be listed in the order they will be checked
 parsers = [
+    StreamjaMIMEParser,
     ClippitUserMIMEParser,
-    OddshotMIMEParser,
     StreamableMIMEParser,
-    VidmeMIMEParser,
     InstagramMIMEParser,
     GfycatMIMEParser,
     ImgurApiMIMEParser,
     RedditUploadsMIMEParser,
     RedditVideoMIMEParser,
     YoutubeMIMEParser,
+    VimeoMIMEParser,
     LiveleakMIMEParser,
-    TwitchMIMEParser,
     FlickrMIMEParser,
     GifsMIMEParser,
     GiphyMIMEParser,
-    ImgtcMIMEParser,
     ImgflipMIMEParser,
     LivememeMIMEParser,
     MakeamemeMIMEParser,

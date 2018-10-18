@@ -9,6 +9,7 @@ from collections import OrderedDict
 import pytest
 
 from rtv.submission_page import SubmissionPage
+from rtv.docs import FOOTER_SUBMISSION
 
 try:
     from unittest import mock
@@ -39,14 +40,14 @@ def test_submission_page_construct(reddit, terminal, config, oauth):
 
     # Set some special flags to make sure that we can draw them
     submission_data = page.content.get(-1)
-    submission_data['gold'] = True
+    submission_data['gold'] = 1
     submission_data['stickied'] = True
     submission_data['saved'] = True
     submission_data['flair'] = 'flair'
 
     # Set some special flags to make sure that we can draw them
     comment_data = page.content.get(0)
-    comment_data['gold'] = True
+    comment_data['gold'] = 3
     comment_data['stickied'] = True
     comment_data['saved'] = True
     comment_data['flair'] = 'flair'
@@ -58,17 +59,12 @@ def test_submission_page_construct(reddit, terminal, config, oauth):
     window.addstr.assert_any_call(0, 0, title)
 
     # Banner
-    menu = ('[1]hot         '
-            '[2]top         '
-            '[3]rising         '
-            '[4]new         '
-            '[5]controversial').encode('utf-8')
-    window.addstr.assert_any_call(0, 0, menu)
+    menu = '[1]hot         [2]top         [3]rising         [4]new         [5]controversial'
+    window.addstr.assert_any_call(0, 0, menu.encode('utf-8'))
 
-    # Footer
-    text = ('[?]Help [q]Quit [h]Return [space]Fold/Expand [o]Open [c]Comment '
-            '[a/z]Vote'.encode('utf-8'))
-    window.addstr.assert_any_call(0, 0, text)
+    # Footer - The text is longer than the default terminal width
+    text = FOOTER_SUBMISSION.strip()[:79]
+    window.addstr.assert_any_call(0, 0, text.encode('utf-8'))
 
     # Submission
     submission_data = page.content.get(-1)
@@ -186,6 +182,10 @@ def test_submission_order(submission_page):
     submission_page.controller.trigger('5')
     assert submission_page.content.order == 'controversial'
 
+    # Shouldn't be able to sort the submission page by gilded
+    submission_page.controller.trigger('6')
+    assert submission_page.content.order == 'controversial'
+
 
 def test_submission_move_top_bottom(submission_page):
 
@@ -259,7 +259,8 @@ def test_submission_vote(submission_page, refresh_token):
             mock.patch('rtv.packages.praw.objects.Submission.downvote') as downvote,     \
             mock.patch('rtv.packages.praw.objects.Submission.clear_vote') as clear_vote:
 
-        data = submission_page.content.get(submission_page.nav.absolute_index)
+        data = submission_page.get_selected_item()
+        data['object'].archived = False
 
         # Upvote
         submission_page.controller.trigger('a')
@@ -294,6 +295,32 @@ def test_submission_vote(submission_page, refresh_token):
         # Downvote - exception
         downvote.side_effect = KeyboardInterrupt
         submission_page.controller.trigger('a')
+        assert data['likes'] is None
+
+
+def test_submission_vote_archived(submission_page, refresh_token, terminal):
+
+    # Log in
+    submission_page.config.refresh_token = refresh_token
+    submission_page.oauth.authorize()
+
+    # Load an archived submission
+    archived_url = 'https://www.reddit.com/r/IAmA/comments/z1c9z/'
+    submission_page.refresh_content(name=archived_url)
+
+    with mock.patch.object(terminal, 'show_notification') as show_notification:
+        data = submission_page.get_selected_item()
+
+        # Upvote the submission
+        show_notification.reset_mock()
+        submission_page.controller.trigger('a')
+        show_notification.assert_called_with('Voting disabled for archived post', style='Error')
+        assert data['likes'] is None
+
+        # Downvote the submission
+        show_notification.reset_mock()
+        submission_page.controller.trigger('z')
+        show_notification.assert_called_with('Voting disabled for archived post', style='Error')
         assert data['likes'] is None
 
 

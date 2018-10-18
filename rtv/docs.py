@@ -43,6 +43,7 @@ https://github.com/michael-lazar/rtv
   3     : Sort by rising
   4     : Sort by new
   5     : Sort by controversial
+  6     : Sort by gilded
   p     : Return to the front page
   r     : Refresh page
   u     : Login or logout
@@ -63,7 +64,7 @@ https://github.com/michael-lazar/rtv
   l     : View comments, or open comment in pager
   h     : Return to subreddit
   o     : Open the submission or comment url
-  SPACE : Fold or expand the selected comment tree
+  SPACE : Hide a submission, or fold/expand the selected comment tree
   b     : Display urls with urlview
   y     : Copy submission permalink to clipboard
   Y     : Copy submission link to clipboard
@@ -77,18 +78,25 @@ https://github.com/michael-lazar/rtv
   - /r/python
   - /r/python/new                (sort)
   - /r/python/controversial-year (sort and order)
+  - /r/python/gilded             (gilded within subreddit)
   - /r/python+linux              (multireddit)
   - /r/python/comments/30rwj2    (submission comments)
   - /comments/30rwj2             (submission comments shorthand)
   - /r/front                     (front page)
-  - /u/me                        (your submissions)
-  - /u/saved                     (your saved posts)
-  - /u/spez                      (a user's submissions)
+  - /u/me                        (your submissions overview)
+  - /u/me/{saved,hidden}         (your saved or hidden posts)
+  - /u/me/{upvoted,downvoted}    (your voted posts)
+  - /u/spez                      (a user's submissions overview)
+  - /u/spez/{submitted,comments} (a user's posts or comments)
   - /u/multi-mod/m/android       (curated multireddit)
   - /domain/python.org           (search by domain)
 """
 
-BANNER = """
+BANNER_SUBREDDIT = """
+[1]hot [2]top [3]rising [4]new [5]controversial [6]gilded
+"""
+
+BANNER_SUBMISSION = """
 [1]hot [2]top [3]rising [4]new [5]controversial
 """
 
@@ -97,48 +105,53 @@ BANNER_SEARCH = """
 """
 
 FOOTER_SUBREDDIT = """
-[?]Help [q]Quit [l]Comments [/]Prompt [u]Login [o]Open [c]Post [a/z]Vote
+[?]Help [q]Quit [l]Comments [/]Prompt [u]Login [o]Open [c]Post [a/z]Vote [r]Refresh
 """
 
 FOOTER_SUBMISSION = """
-[?]Help [q]Quit [h]Return [space]Fold/Expand [o]Open [c]Comment [a/z]Vote
+[?]Help [q]Quit [h]Return [space]Fold/Expand [o]Open [c]Comment [a/z]Vote [r]Refresh
 """
 
 FOOTER_SUBSCRIPTION = """
 [?]Help [q]Quit [h]Return [l]Select
 """
 
-COMMENT_FILE = """
-# Please enter a comment. Lines starting with '#' will be ignored,
-# and an empty message aborts the comment.
-#
-# Replying to {author}'s {type}
-{content}
-"""
+TOKEN = "INSTRUCTIONS"
 
-COMMENT_EDIT_FILE = """{content}
-# Please enter a comment. Lines starting with '#' will be ignored,
-# and an empty message aborts the comment.
-#
-# Editing your comment
-"""
+COMMENT_FILE = """<!--{token}
+Replying to {{author}}'s {{type}}:
+{{content}}
 
-SUBMISSION_FILE = """
-# Please enter your submission. Lines starting with '#' will be ignored,
-# and an empty message aborts the submission.
-#
-# The first line will be interpreted as the title
-# The following lines will be interpreted as the content
-#
-# Posting to {name}
-"""
+Enter your reply below this instruction block,
+an empty message will abort the comment.
+{token}-->
+""".format(token=TOKEN)
 
-SUBMISSION_EDIT_FILE = """{content}
-# Please enter your submission. Lines starting with '#' will be ignored,
-# and an empty message aborts the submission.
-#
-# Editing {name}
-"""
+COMMENT_EDIT_FILE = """<!--{token}
+Editing comment #{{id}}.
+The comment is shown below, update it and save the file.
+{token}-->
+
+{{content}}
+""".format(token=TOKEN)
+
+SUBMISSION_FILE = """<!--{token}
+Submitting a selfpost to {{name}}.
+
+Enter your submission below this instruction block:
+- The first line will be interpreted as the title
+- The following lines will be interpreted as the body
+- An empty message will abort the submission
+{token}-->
+""".format(token=TOKEN)
+
+SUBMISSION_EDIT_FILE = """<!--{token}
+Editing submission #{{id}}.
+The submission is shown below, update it and save the file.
+{token}-->
+
+{{content}}
+""".format(token=TOKEN)
 
 OAUTH_ACCESS_DENIED = """\
         <h1 style="color: red">Access Denied</h1><hr>

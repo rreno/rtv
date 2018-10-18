@@ -9,7 +9,7 @@ import codecs
 import logging
 import threading
 
-#pylint: disable=import-error
+# pylint: disable=import-error
 from six.moves.urllib.parse import urlparse, parse_qs
 from six.moves.BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
@@ -18,10 +18,21 @@ from .config import TEMPLATES
 from .exceptions import InvalidRefreshToken
 from .packages.praw.errors import HTTPException, OAuthException
 
-
 _logger = logging.getLogger(__name__)
 
 INDEX = os.path.join(TEMPLATES, 'index.html')
+
+
+class OAuthHTTPServer(HTTPServer):
+
+    def handle_error(self, request, client_address):
+        """
+        The default HTTPServer's error handler prints the request traceback
+        to stdout, which breaks the curses display.
+
+        Override it to log to a file instead.
+        """
+        _logger.exception('Error processing request in OAuth HTTP Server')
 
 
 class OAuthHandler(BaseHTTPRequestHandler):
@@ -70,11 +81,11 @@ class OAuthHandler(BaseHTTPRequestHandler):
             thread.daemon = True
             thread.start()
 
-    def log_message(self, format, *args):
+    def log_message(self, fmt, *args):
         """
         Redirect logging to our own handler instead of stdout
         """
-        _logger.debug(format, *args)
+        _logger.debug(fmt, *args)
 
     def build_body(self, template_file=INDEX):
         """
@@ -126,7 +137,7 @@ class OAuthHelper(object):
             if '.compact' not in self.reddit.config.API_PATHS['authorize']:
                 self.reddit.config.API_PATHS['authorize'] += '.compact'
 
-    def authorize(self):
+    def authorize(self, autologin=False):
 
         self.params.update(state=None, code=None, error=None)
 
@@ -152,6 +163,14 @@ class OAuthHelper(object):
                     raise InvalidRefreshToken(
                         '       Invalid user credentials!\n'
                         'The cached refresh token has been removed')
+
+                else:
+                    if not autologin:
+                        # Only show the welcome message if explicitly logging
+                        # in, not when RTV first launches.
+                        message = 'Welcome {}!'.format(self.reddit.user.name)
+                        self.term.show_notification(message)
+
             return
 
         state = uuid.uuid4().hex
@@ -160,7 +179,7 @@ class OAuthHelper(object):
 
         if self.server is None:
             address = ('', self.config['oauth_redirect_port'])
-            self.server = HTTPServer(address, OAuthHandler)
+            self.server = OAuthHTTPServer(address, OAuthHandler)
 
         if self.term.display:
             # Open a background browser (e.g. firefox) which is non-blocking.

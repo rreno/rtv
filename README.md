@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-RTV provides a terminal interface to view and interact with reddit.<br>
+RTV provides a text-based interface to view and interact with reddit.<br>
 It's compatible with most terminal emulators on Linux and macOS.
 </p>
 
@@ -22,7 +22,7 @@ RTV is built in python using the curses library.
     <img alt="pypi" src="https://img.shields.io/pypi/v/rtv.svg?label=version"/>
   </a>
   <a href="https://pypi.python.org/pypi/rtv/">
-    <img alt="python" src="https://img.shields.io/badge/python-2.7%2C%203.6-blue.svg"/>
+    <img alt="python" src="https://img.shields.io/badge/python-2.7%2C%203.4+-blue.svg"/>
   </a>
   <a href="https://travis-ci.org/michael-lazar/rtv">
     <img alt="travis-ci" src="https://travis-ci.org/michael-lazar/rtv.svg?branch=master"/>
@@ -32,6 +32,9 @@ RTV is built in python using the curses library.
   </a>
   <a href="https://gitter.im/michael-lazar/rtv">
     <img alt="gitter" src="https://img.shields.io/gitter/room/michael-lazar/rtv.js.svg"/>
+  </a>
+  <a href="https://saythanks.io/to/michael-lazar">
+    <img alt="say-thanks" src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg"/>
   </a>
 </p>
 
@@ -70,14 +73,14 @@ See [Repology](https://repology.org/metapackage/rtv/packages) for an up-to-date 
 # macOS
 $ brew install rtv
 
-# Debian 9+, Ubuntu 17.04+
-$ apt install rtv
-
 # Arch
 $ pacaur -S rtv
 
 # Nix
 $ nix-env -i rtv
+
+# FreeBSD
+$ pkg install rtv
 ```
 
 ## Usage
@@ -102,7 +105,7 @@ Press <kbd>/</kbd> to open the navigation prompt, where you can type things like
 
 - ``/front``
 - ``/r/commandprompt+linuxmasterrace``
-- ``/r/programming/controversial-week``
+- ``/r/programming/controversial``
 - ``/u/me``
 - ``/u/multi-mod/m/art``
 - ``/domain/github.com``
@@ -129,7 +132,7 @@ You can use [mailcap](https://en.wikipedia.org/wiki/Media_type#Mailcap) to confi
 <img alt="title image" src="resources/mailcap.gif"/>
 </p>
 
-A mailcap file allows you to associate different MIME media types, like ``image/jpeg`` or ``video/mp4``, with shell commands. This feature is disabled by default because it takes a a few extra steps to configure. To get started, copy the default mailcap template to your home directory.
+A mailcap file allows you to associate different MIME media types, like ``image/jpeg`` or ``video/mp4``, with shell commands. This feature is disabled by default because it takes a few extra steps to configure. To get started, copy the default mailcap template to your home directory.
 
 ```bash
 $ rtv --copy-mailcap

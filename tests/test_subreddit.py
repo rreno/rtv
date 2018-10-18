@@ -4,10 +4,12 @@ from __future__ import unicode_literals
 import curses
 
 import six
+import pytest
 
 from rtv import __version__
 from rtv.subreddit_page import SubredditPage
 from rtv.packages.praw.errors import NotFound, HTTPException
+from requests.exceptions import ReadTimeout
 
 try:
     from unittest import mock
@@ -28,11 +30,7 @@ def test_subreddit_page_construct(reddit, terminal, config, oauth):
     window.addstr.assert_any_call(0, 0, title)
 
     # Banner
-    menu = ('[1]hot         '
-            '[2]top         '
-            '[3]rising         '
-            '[4]new         '
-            '[5]controversial').encode('utf-8')
+    menu = '[1]hot     [2]top     [3]rising     [4]new     [5]controversial     [6]gilded'.encode('utf-8')
     window.addstr.assert_any_call(0, 0, menu)
 
     # Submission
@@ -192,6 +190,9 @@ def test_subreddit_prompt_submission_invalid(subreddit_page, terminal):
 
 def test_subreddit_order(subreddit_page):
 
+    # /r/python doesn't always have rising submissions, so use a larger sub
+    subreddit_page.refresh_content(name='all')
+
     subreddit_page.content.query = ''
     subreddit_page.controller.trigger('1')
     assert subreddit_page.content.order == 'hot'
@@ -199,11 +200,18 @@ def test_subreddit_order(subreddit_page):
     assert subreddit_page.content.order == 'rising'
     subreddit_page.controller.trigger('4')
     assert subreddit_page.content.order == 'new'
+    subreddit_page.controller.trigger('6')
+    assert subreddit_page.content.order == 'gilded'
 
     subreddit_page.content.query = 'search text'
     subreddit_page.controller.trigger('1')
     assert subreddit_page.content.order == 'relevance'
     subreddit_page.controller.trigger('4')
+    assert subreddit_page.content.order == 'new'
+
+    # Shouldn't be able to sort queries by gilded
+    subreddit_page.controller.trigger('6')
+    assert curses.flash.called
     assert subreddit_page.content.order == 'new'
 
 
@@ -387,6 +395,21 @@ def test_subreddit_open_subscriptions(subreddit_page, refresh_token):
         assert loop.called
 
 
+def test_subreddit_get_inbox_timeout(subreddit_page, refresh_token, terminal, vcr):
+    if vcr.record_mode == 'none':
+        pytest.skip('Unable to test ReadTimeout exceptions using a cassette')
+
+    # Log in
+    subreddit_page.config.refresh_token = refresh_token
+    subreddit_page.oauth.authorize()
+
+    subreddit_page.reddit.config.timeout = 0.00000001
+    subreddit_page.controller.trigger('i')
+    text = 'HTTP request timed out'.encode('utf-8')
+    terminal.stdscr.subwin.addstr.assert_called_with(1, 1, text)
+    assert isinstance(terminal.loader.exception, ReadTimeout)
+
+
 def test_subreddit_open_multireddits(subreddit_page, refresh_token):
 
     # Log in
@@ -399,17 +422,35 @@ def test_subreddit_open_multireddits(subreddit_page, refresh_token):
         assert loop.called
 
 
-def test_subreddit_saved(subreddit_page, refresh_token):
+def test_subreddit_private_user_pages(subreddit_page, refresh_token):
 
     # Log in
     subreddit_page.config.refresh_token = refresh_token
     subreddit_page.oauth.authorize()
 
-    subreddit_page.refresh_content(name='/u/saved')
+    subreddit_page.refresh_content(name='/u/me/saved')
+    subreddit_page.draw()
+
+    subreddit_page.refresh_content(name='/u/me/hidden')
+    subreddit_page.draw()
+
+    subreddit_page.refresh_content(name='/u/me/upvoted')
+    subreddit_page.draw()
+
+    subreddit_page.refresh_content(name='/u/me/downvoted')
+    subreddit_page.draw()
+
+    subreddit_page.refresh_content(name='/u/me/overview')
+    subreddit_page.draw()
+
+    subreddit_page.refresh_content(name='/u/me/submitted')
+    subreddit_page.draw()
+
+    subreddit_page.refresh_content(name='/u/me/comments')
     subreddit_page.draw()
 
 
-def test_subreddit_user_overview(subreddit_page, refresh_token):
+def test_subreddit_user_pages(subreddit_page, refresh_token):
 
     # Log in
     subreddit_page.config.refresh_token = refresh_token
@@ -418,7 +459,18 @@ def test_subreddit_user_overview(subreddit_page, refresh_token):
     # Pick a user that has a lot of recent comments, so we can make sure that
     # SavedComment objects have all of the properties necessary to be drawn
     # on the submission page.
+
+    # Should default to the overview page
     subreddit_page.refresh_content(name='/u/spez')
+    subreddit_page.draw()
+
+    subreddit_page.refresh_content(name='/u/spez/overview')
+    subreddit_page.draw()
+
+    subreddit_page.refresh_content(name='/u/spez/submitted')
+    subreddit_page.draw()
+
+    subreddit_page.refresh_content(name='/u/spez/comments')
     subreddit_page.draw()
 
 
@@ -442,23 +494,36 @@ def test_subreddit_draw_header(subreddit_page, refresh_token, terminal):
     # /u/me alias should be renamed in the header
     subreddit_page.refresh_content(name='/u/me')
     subreddit_page.draw()
-    text = 'My Submissions'.encode('utf-8')
+    text = 'My Overview'.encode('utf-8')
     terminal.stdscr.subwin.addstr.assert_any_call(0, 0, text)
 
     subreddit_page.refresh_content(name='/u/me/new')
     subreddit_page.draw()
-    text = 'My Submissions'.encode('utf-8')
+    text = 'My Overview'.encode('utf-8')
     terminal.stdscr.subwin.addstr.assert_any_call(0, 0, text)
 
     # /u/saved alias should be renamed in the header
-    subreddit_page.refresh_content(name='/u/saved')
+    subreddit_page.refresh_content(name='/u/me/saved')
     subreddit_page.draw()
-    text = 'My Saved Submissions'.encode('utf-8')
+    text = 'My Saved Content'.encode('utf-8')
     terminal.stdscr.subwin.addstr.assert_any_call(0, 0, text)
 
-    subreddit_page.refresh_content(name='/u/saved/new')
+    # /u/upvoted alias should be renamed in the header
+    subreddit_page.refresh_content(name='/u/me/upvoted')
     subreddit_page.draw()
-    text = 'My Saved Submissions'.encode('utf-8')
+    text = 'My Upvoted Content'.encode('utf-8')
+    terminal.stdscr.subwin.addstr.assert_any_call(0, 0, text)
+
+    # /u/downvoted alias should be renamed in the header
+    subreddit_page.refresh_content(name='/u/me/downvoted')
+    subreddit_page.draw()
+    text = 'My Downvoted Content'.encode('utf-8')
+    terminal.stdscr.subwin.addstr.assert_any_call(0, 0, text)
+
+    # /u/hidden alias should be renamed in the header
+    subreddit_page.refresh_content(name='/u/me/hidden')
+    subreddit_page.draw()
+    text = 'My Hidden Content'.encode('utf-8')
     terminal.stdscr.subwin.addstr.assert_any_call(0, 0, text)
 
 
@@ -470,3 +535,35 @@ def test_subreddit_frontpage_toggle(subreddit_page, terminal):
         assert subreddit_page.content.name == '/r/aww'
         subreddit_page.controller.trigger('p')
         assert subreddit_page.content.name == '/r/front'
+
+
+def test_subreddit_hide_submission(subreddit_page, refresh_token):
+
+    # Log in
+    subreddit_page.config.refresh_token = refresh_token
+    subreddit_page.oauth.authorize()
+
+    # The api won't return hidden posts in the submission listing, so the
+    # first post should always have hidden set to false
+    data = subreddit_page.get_selected_item()
+    assert data['hidden'] is False
+
+    # Hide the first submission by pressing the space key
+    subreddit_page.controller.trigger(0x20)
+    assert subreddit_page.term.loader.exception is None
+    data = subreddit_page.get_selected_item()
+    assert data['hidden'] is True
+
+    # Make sure that the status was actually updated on the server side
+    data['object'].refresh()
+    assert data['object'].hidden is True
+
+    # Now undo the hide by pressing space again
+    subreddit_page.controller.trigger(0x20)
+    assert subreddit_page.term.loader.exception is None
+    data = subreddit_page.get_selected_item()
+    assert data['hidden'] is False
+
+    # Make sure that the status was actually updated on the server side
+    data['object'].refresh()
+    assert data['object'].hidden is False
